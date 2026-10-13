@@ -1,17 +1,23 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-let supabaseInstance: SupabaseClient | null = null;
+let supabaseClient: SupabaseClient | null = null;
 
 export const getSupabase = () => {
-  if (supabaseInstance) return supabaseInstance;
+  if (typeof window === 'undefined') {
+    // Returner en dummy på serveren for at forhindre build-fejl
+    return {} as SupabaseClient;
+  }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
+  if (!supabaseClient) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
+    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+  }
 
-  supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
-  return supabaseInstance;
+  return supabaseClient;
 };
 
+// Proxy der sikrer, at Supabase kun kaldes i browseren
 export const supabase = new Proxy({} as SupabaseClient, {
   get(_target, prop) {
     const client = getSupabase();
