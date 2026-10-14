@@ -168,6 +168,67 @@ export default function Home() {
     }
   };
 
+  // FORÆLDRE: Godkend ønske og opret som ny belønning i shoppen
+  const approveWish = async (wish: Wish) => {
+    const costInput = prompt(`Indtast pris i XP for "${wish.title}":`, '100');
+    if (!costInput) return;
+
+    const costXp = parseInt(costInput, 10);
+    if (isNaN(costXp) || costXp <= 0) {
+      alert('Ugyldig pris.');
+      return;
+    }
+
+    try {
+      // 1. Opret som ny belønning i rewards-tabellen
+      const { data: newReward, error: rewardError } = await supabase
+        .from('rewards')
+        .insert([
+          {
+            title: wish.title,
+            description: wish.note || 'Ønske oprettet af barn',
+            cost_xp: costXp,
+            icon: '🎁',
+            category: 'Ønsker',
+          },
+        ])
+        .select();
+
+      if (rewardError) throw rewardError;
+
+      // 2. Opdater ønske-status til approved
+      await supabase
+        .from('wishes')
+        .update({ status: 'approved' })
+        .eq('id', wish.id);
+
+      if (newReward) {
+        setRewards([...rewards, newReward[0]]);
+      }
+      setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'approved' } : w)));
+
+      alert(`✅ Ønsket "${wish.title}" er godkendt og tilføjet til shoppen for ${costXp} XP!`);
+    } catch (err) {
+      console.error('Fejl ved godkendelse af ønske:', err);
+    }
+  };
+
+  // FORÆLDRE: Afvis ønske
+  const rejectWish = async (wish: Wish) => {
+    if (!confirm(`Vil du afvise ønsket "${wish.title}"?`)) return;
+
+    try {
+      await supabase
+        .from('wishes')
+        .update({ status: 'rejected' })
+        .eq('id', wish.id);
+
+      setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'rejected' } : w)));
+    } catch (err) {
+      console.error('Fejl ved afvisning:', err);
+    }
+  };
+
   if (!isClient || loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-white">
@@ -177,7 +238,9 @@ export default function Home() {
   }
 
   const activeUserData = users.find((u) => u.id === selectedUser);
-  const userWishes = wishes.filter((w) => w.user_id === selectedUser);
+  const isAdult = activeUserData?.role === 'adult';
+  const userWishes = wishes.filter((w) => w.user_id === selectedUser && w.status === 'pending');
+  const pendingWishesAll = wishes.filter((w) => w.status === 'pending');
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 max-w-4xl mx-auto">
@@ -287,9 +350,55 @@ export default function Home() {
         </section>
       )}
 
-      {/* Fane 2: BørneShoppen & Ønskeseddel */}
+      {/* Fane 2: BørneShoppen, Ønskeseddel & Forældre-Godkendelse */}
       {activeTab === 'shop' && (
         <section className="space-y-8">
+          {/* FORÆLDRE-PANEL: Vis indkomne ønsker hvis en voksen er valgt */}
+          {isAdult && pendingWishesAll.length > 0 && (
+            <div className="bg-amber-950/40 p-5 rounded-2xl border border-amber-600/60 shadow-lg">
+              <h3 className="text-lg font-bold text-amber-300 mb-1 flex items-center gap-2">
+                🔒 Forældre-panel: Indkomne Ønsker ({pendingWishesAll.length})
+              </h3>
+              <p className="text-xs text-amber-200/70 mb-4">
+                Sæt en XP-pris for at tilføje ønsket direkte som en købbar belønning i shoppen.
+              </p>
+
+              <div className="space-y-3">
+                {pendingWishesAll.map((wish) => {
+                  const wishUser = users.find((u) => u.id === wish.user_id);
+                  return (
+                    <div
+                      key={wish.id}
+                      className="bg-slate-900/90 p-4 rounded-xl border border-amber-500/30 flex justify-between items-center flex-wrap gap-3"
+                    >
+                      <div>
+                        <span className="text-xs font-bold text-amber-400 uppercase tracking-wide block">
+                          Ønske fra {wishUser?.name || 'Barn'}
+                        </span>
+                        <p className="font-bold text-slate-100 text-base">{wish.title}</p>
+                        {wish.note && <p className="text-xs text-slate-400 mt-0.5">{wish.note}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => approveWish(wish)}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg transition active:scale-95 cursor-pointer"
+                        >
+                          Godkend & Sæt XP 🏷️
+                        </button>
+                        <button
+                          onClick={() => rejectWish(wish)}
+                          className="bg-rose-900/60 hover:bg-rose-800 text-rose-200 font-bold text-xs px-3 py-2 rounded-lg transition active:scale-95 cursor-pointer"
+                        >
+                          Afvis ❌
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Varer i Shoppen */}
           <div>
             <div className="flex justify-between items-center mb-4">
@@ -385,7 +494,7 @@ export default function Home() {
                         {w.note && <p className="text-xs text-slate-400">{w.note}</p>}
                       </div>
                       <span className="text-xs bg-indigo-950 text-indigo-300 border border-indigo-800 px-2.5 py-1 rounded-full">
-                        Afventer pris... ⏳
+                        Afventer pris fra mor eller far... ⏳
                       </span>
                     </div>
                   ))}
