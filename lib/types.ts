@@ -21,3 +21,12 @@ export interface EventLog {
   xp_earned: number;
   created_at: string;
 }
+
+export interface Wish {
+  id: string;
+  user_id: string;
+  title: string;
+  note?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+}
