@@ -49,3 +49,12 @@ export interface Wish {
   status: 'pending' | 'approved' | 'rejected';
   created_at: string;
 }
+
+export interface WeeklySchedule {
+  id: string;
+  user_id: string;
+  area_name: string;
+  description?: string;
+  icon?: string;
+  day_of_week?: string;
+}

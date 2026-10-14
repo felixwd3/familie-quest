@@ -2,15 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { User, Task, Reward, Wish } from '@/lib/types';
+import { User, Task, Reward, Wish, WeeklySchedule } from '@/lib/types';
 
 export default function Home() {
   const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [wishes, setWishes] = useState<Wish[]>([]);
+  const [schedules, setSchedules] = useState<WeeklySchedule[]>([]);
   const [selectedUser, setSelectedUser] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'quests' | 'shop'>('quests');
+  const [activeTab, setActiveTab] = useState<'quests' | 'schedule' | 'shop'>('quests');
   const [categoryFilter, setCategoryFilter] = useState<string>('Alle');
   const [loading, setLoading] = useState<boolean>(true);
   const [isClient, setIsClient] = useState<boolean>(false);
@@ -34,6 +35,7 @@ export default function Home() {
         const { data: tasksData } = await supabase.from('tasks').select('*');
         const { data: rewardsData } = await supabase.from('rewards').select('*');
         const { data: wishesData } = await supabase.from('wishes').select('*');
+        const { data: schedulesData } = await supabase.from('weekly_schedules').select('*');
 
         if (usersData) {
           setUsers(usersData);
@@ -42,6 +44,7 @@ export default function Home() {
         if (tasksData) setTasks(tasksData);
         if (rewardsData) setRewards(rewardsData);
         if (wishesData) setWishes(wishesData);
+        if (schedulesData) setSchedules(schedulesData);
       } catch (err) {
         console.error('Fejl ved indlæsning af data:', err);
       } finally {
@@ -335,7 +338,7 @@ export default function Home() {
         </section>
 
         {/* Fanebladsnavigation */}
-        <div className="flex bg-stone-200/60 p-1 rounded-full max-w-xs mx-auto border border-stone-200/80">
+        <div className="flex bg-stone-200/60 p-1 rounded-full max-w-sm mx-auto border border-stone-200/80">
           <button
             onClick={() => setActiveTab('quests')}
             className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center ${
@@ -347,8 +350,18 @@ export default function Home() {
             Opgaver
           </button>
           <button
+            onClick={() => setActiveTab('schedule')}
+            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center ${
+              activeTab === 'schedule'
+                ? 'bg-white text-stone-900 shadow-sm'
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            📅 Ugeplan
+          </button>
+          <button
             onClick={() => setActiveTab('shop')}
-            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center flex items-center justify-center gap-1 ${
               activeTab === 'shop'
                 ? 'bg-white text-stone-900 shadow-sm'
                 : 'text-stone-500 hover:text-stone-800'
@@ -419,7 +432,62 @@ export default function Home() {
           </section>
         )}
 
-        {/* FANE 2: BØRNESHOP & ØNSKER */}
+        {/* FANE 2: UGEPLAN & TJENESTER */}
+        {activeTab === 'schedule' && (
+          <section className="space-y-6">
+            <div>
+              <h2 className="text-base font-bold text-stone-900">Ugens Ansvarsområder & Tjenester</h2>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Fast overblik over fordelingen, så alle ved, hvem der har tjansen hvornår.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {users.map((user) => {
+                const userSchedules = schedules.filter((s) => s.user_id === user.id);
+
+                return (
+                  <div key={user.id} className="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm space-y-3">
+                    <div className="flex justify-between items-center border-b border-stone-100 pb-3">
+                      <div>
+                        <h3 className="font-bold text-stone-900 text-base">{user.name}</h3>
+                        <p className="text-xs text-stone-500">{user.role === 'adult' ? 'Voksen' : 'Barn'}</p>
+                      </div>
+                      <span className="text-xs bg-stone-100 text-stone-700 px-2.5 py-1 rounded-full font-semibold">
+                        {userSchedules.length} ansvarsområder
+                      </span>
+                    </div>
+
+                    {userSchedules.length > 0 ? (
+                      <div className="space-y-2.5">
+                        {userSchedules.map((sched) => (
+                          <div key={sched.id} className="bg-stone-50 p-3 rounded-xl border border-stone-200/60 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xl">{sched.icon || '📌'}</span>
+                              <div>
+                                <p className="font-bold text-stone-900 text-xs">{sched.area_name}</p>
+                                {sched.description && (
+                                  <p className="text-[11px] text-stone-500">{sched.description}</p>
+                                )}
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-bold bg-white text-stone-700 border border-stone-200 px-2 py-0.5 rounded-md whitespace-nowrap">
+                              {sched.day_of_week || 'Hele Ugen'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-stone-400 italic py-2">Ingen specifikke tildelte ansvarsområder i denne uge.</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* FANE 3: BØRNESHOP & ØNSKER */}
         {activeTab === 'shop' && (
           <section className="space-y-7">
             {/* FORÆLDRE GODKENDELSE */}
