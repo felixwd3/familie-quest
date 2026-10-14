@@ -3,6 +3,7 @@ export interface User {
   name: string;
   role: 'adult' | 'child';
   total_xp: number;
+  spendable_xp: number;
   level: number;
 }
 
@@ -19,6 +20,24 @@ export interface EventLog {
   user_id: string;
   task_id: string;
   xp_earned: number;
+  created_at: string;
+}
+
+export interface Reward {
+  id: string;
+  title: string;
+  description: string;
+  cost_xp: number;
+  icon: string;
+  category: string;
+}
+
+export interface Purchase {
+  id: string;
+  user_id: string;
+  reward_id: string;
+  cost_xp: number;
+  status: 'pending' | 'delivered';
   created_at: string;
 }
 
