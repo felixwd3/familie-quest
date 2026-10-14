@@ -285,7 +285,7 @@ export default function Home() {
       </header>
 
       <div className="max-w-4xl mx-auto px-4 pt-6 space-y-8">
-        {/* Profil-Kort (Nordisk stil) */}
+        {/* Profil-Kort */}
         <section>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {users.map((u) => {
@@ -400,62 +400,4 @@ export default function Home() {
                       </div>
                       <div>
                         <h3 className="font-bold text-stone-900 text-sm">{task.title}</h3>
-                        <p className="text-xs text-stone-500 font-medium mt-0.5">
-                          {task.category} • {task.duration_minutes} min
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => completeTask(task)}
-                      className="bg-stone-900 hover:bg-stone-800 active:bg-stone-950 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition cursor-pointer shadow-2xs shrink-0"
-                    >
-                      +{xp} XP
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* FANE 2: BØRNESHOP & ØNSKER */}
-        {activeTab === 'shop' && (
-          <section className="space-y-7">
-            {/* FORÆLDRE GODKENDELSE */}
-            {isAdult && pendingWishesAll.length > 0 && (
-              <div className="bg-amber-50/70 p-5 rounded-2xl border border-amber-200/80 space-y-3">
-                <div>
-                  <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2">
-                    <span>💡</span> Indkomne Ønsker til behandling ({pendingWishesAll.length})
-                  </h3>
-                  <p className="text-xs text-amber-700/80 mt-0.5">
-                    Angiv en pris i XP for at gøre ønsket til en tilgængelig belønning.
-                  </p>
-                </div>
-
-                <div className="space-y-2 pt-1">
-                  {pendingWishesAll.map((wish) => {
-                    const wishUser = users.find((u) => u.id === wish.user_id);
-                    return (
-                      <div
-                        key={wish.id}
-                        className="bg-white p-3.5 rounded-xl border border-amber-200 flex justify-between items-center flex-wrap gap-3 shadow-2xs"
-                      >
-                        <div>
-                          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">
-                            Ønske fra {wishUser?.name || 'Barn'}
-                          </span>
-                          <p className="font-bold text-stone-900 text-sm">{wish.title}</p>
-                          {wish.note && <p className="text-xs text-stone-500">{wish.note}</p>}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => approveWish(wish)}
-                            className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition cursor-pointer shadow-2xs"
-                          >
-                            Godkend & Sæt XP
-                          </button>
-                          <button
-                            onClick={() => rejectWish(wish)}
+                        <p className="text-xs text-stone-500 font-medium mt-0.5
