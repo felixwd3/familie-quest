@@ -272,7 +272,7 @@ export default function Home() {
             <select
               value={selectedUser}
               onChange={(e) => setSelectedUser(e.target.value)}
-              className="bg-white text-stone-800 font-semibold border border-stone-200 rounded-full px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer shadow-2xs"
+              className="bg-white text-stone-800 font-semibold border border-stone-200 rounded-full px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer shadow-sm"
             >
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -296,7 +296,7 @@ export default function Home() {
                 <div
                   key={u.id}
                   onClick={() => setSelectedUser(u.id)}
-                  className={`relative rounded-2xl p-4.5 transition cursor-pointer border ${
+                  className={`relative rounded-2xl p-4 transition cursor-pointer border ${
                     isSelected
                       ? 'bg-white border-stone-800 shadow-md shadow-stone-200/60 ring-1 ring-stone-800/10'
                       : 'bg-white/60 border-stone-200/80 hover:bg-white hover:border-stone-300'
@@ -356,7 +356,7 @@ export default function Home() {
           >
             <span>Shoppen</span>
             {activeUserData && (
-              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
                 {activeUserData.spendable_xp || 0}
               </span>
             )}
@@ -367,14 +367,14 @@ export default function Home() {
         {activeTab === 'quests' && (
           <section className="space-y-5">
             {/* Kategori-Piller */}
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {categories.map((cat) => (
                 <button
                   key={cat}
                   onClick={() => setCategoryFilter(cat)}
                   className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition whitespace-nowrap border ${
                     categoryFilter === cat
-                      ? 'bg-stone-900 border-stone-900 text-white shadow-2xs'
+                      ? 'bg-stone-900 border-stone-900 text-white shadow-sm'
                       : 'bg-white border-stone-200 text-stone-600 hover:border-stone-300'
                   }`}
                 >
@@ -392,12 +392,4 @@ export default function Home() {
                 return (
                   <div
                     key={task.id}
-                    className="bg-white border border-stone-200/90 hover:border-stone-400/80 p-4 rounded-2xl transition shadow-2xs flex justify-between items-center gap-4"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <div className="w-10 h-10 rounded-xl bg-stone-100 border border-stone-200/60 flex items-center justify-center text-xl shrink-0">
-                        {icon}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-stone-900 text-sm">{task.title}</h3>
-                        <p className="text-xs text-stone-500 font-medium mt-0.5
+                    className="bg-white border border-stone-200/90 hover:border-stone-400/80 p-4 rounded-2xl transition shadow-sm flex justify-between items-center gap-4"
