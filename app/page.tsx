@@ -393,3 +393,192 @@ export default function Home() {
                   <div
                     key={task.id}
                     className="bg-white border border-stone-200/90 hover:border-stone-400/80 p-4 rounded-2xl transition shadow-sm flex justify-between items-center gap-4"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-10 h-10 rounded-xl bg-stone-100 border border-stone-200/60 flex items-center justify-center text-xl shrink-0">
+                        {icon}
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-stone-900 text-sm">{task.title}</h3>
+                        <p className="text-xs text-stone-500 font-medium mt-0.5">
+                          {task.category} • {task.duration_minutes} min
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => completeTask(task)}
+                      className="bg-stone-900 hover:bg-stone-800 active:bg-stone-950 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition cursor-pointer shrink-0"
+                    >
+                      +{xp} XP
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* FANE 2: BØRNESHOP & ØNSKER */}
+        {activeTab === 'shop' && (
+          <section className="space-y-7">
+            {/* FORÆLDRE GODKENDELSE */}
+            {isAdult && pendingWishesAll.length > 0 && (
+              <div className="bg-amber-50/70 p-5 rounded-2xl border border-amber-200/80 space-y-3">
+                <div>
+                  <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2">
+                    <span>💡</span> Indkomne Ønsker til behandling ({pendingWishesAll.length})
+                  </h3>
+                  <p className="text-xs text-amber-700/80 mt-0.5">
+                    Angiv en pris i XP for at gøre ønsket til en tilgængelig belønning.
+                  </p>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  {pendingWishesAll.map((wish) => {
+                    const wishUser = users.find((u) => u.id === wish.user_id);
+                    return (
+                      <div
+                        key={wish.id}
+                        className="bg-white p-3.5 rounded-xl border border-amber-200 flex justify-between items-center flex-wrap gap-3 shadow-sm"
+                      >
+                        <div>
+                          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">
+                            Ønske fra {wishUser?.name || 'Barn'}
+                          </span>
+                          <p className="font-bold text-stone-900 text-sm">{wish.title}</p>
+                          {wish.note && <p className="text-xs text-stone-500">{wish.note}</p>}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => approveWish(wish)}
+                            className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition cursor-pointer shadow-sm"
+                          >
+                            Godkend & Sæt XP
+                          </button>
+                          <button
+                            onClick={() => rejectWish(wish)}
+                            className="bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                          >
+                            Afvis
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* BELØNNINGSKATALOG */}
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="text-base font-bold text-stone-900">Belønninger & Hygge</h2>
+                <span className="text-xs text-stone-500 font-medium">
+                  Optjent: <strong className="text-stone-900">{activeUserData?.spendable_xp || 0} XP</strong>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {rewards.map((reward) => {
+                  const canAfford = (activeUserData?.spendable_xp || 0) >= reward.cost_xp;
+
+                  return (
+                    <div
+                      key={reward.id}
+                      className={`p-4 rounded-2xl border transition flex justify-between items-center gap-4 ${
+                        canAfford
+                          ? 'bg-white border-stone-200 shadow-sm'
+                          : 'bg-stone-50/70 border-stone-200/60 opacity-60'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-stone-100 border border-stone-200/60 flex items-center justify-center text-xl shrink-0">
+                          {reward.icon}
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-stone-900 text-sm">{reward.title}</h3>
+                          <p className="text-xs text-stone-500 mt-0.5">{reward.description}</p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => buyReward(reward)}
+                        disabled={!canAfford}
+                        className={`text-xs font-bold px-3.5 py-2 rounded-xl transition whitespace-nowrap shrink-0 ${
+                          canAfford
+                            ? 'bg-emerald-700 hover:bg-emerald-800 text-white cursor-pointer shadow-sm'
+                            : 'bg-stone-200 text-stone-400 cursor-not-allowed'
+                        }`}
+                      >
+                        Indløs ({reward.cost_xp} XP)
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* SEND ØNSKE FORMULAR */}
+            <div className="bg-white p-5 rounded-2xl border border-stone-200/90 space-y-4 shadow-sm">
+              <div>
+                <h3 className="text-sm font-bold text-stone-900">Nyt Ønske til Shoppen</h3>
+                <p className="text-xs text-stone-500 mt-0.5">Mangler der noget du vil gemme sammen til?</p>
+              </div>
+
+              <form onSubmit={submitWish} className="flex flex-col gap-3">
+                <input
+                  type="text"
+                  placeholder="Hvad ønsker du dig? (f.eks. Nyt LEGO-sæt)"
+                  value={newWishTitle}
+                  onChange={(e) => setNewWishTitle(e.target.value)}
+                  required
+                  className="bg-stone-50 text-stone-900 border border-stone-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 placeholder:text-stone-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Evt. bemærkning..."
+                  value={newWishNote}
+                  onChange={(e) => setNewWishNote(e.target.value)}
+                  className="bg-stone-50 text-stone-900 border border-stone-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 placeholder:text-stone-400"
+                />
+                <button
+                  type="submit"
+                  disabled={submittingWish}
+                  className="bg-stone-900 hover:bg-stone-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition active:scale-95 self-start cursor-pointer shadow-sm"
+                >
+                  {submittingWish ? 'Sender...' : 'Send Ønske ✨'}
+                </button>
+              </form>
+
+              {userWishes.length > 0 && (
+                <div className="pt-2 border-t border-stone-100">
+                  <h4 className="text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">
+                    Dine Indsendte Ønsker
+                  </h4>
+                  <div className="space-y-2">
+                    {userWishes.map((w) => (
+                      <div
+                        key={w.id}
+                        className="bg-stone-50 p-3 rounded-xl border border-stone-200/60 flex justify-between items-center"
+                      >
+                        <div>
+                          <p className="font-bold text-stone-800 text-xs">{w.title}</p>
+                          {w.note && <p className="text-[11px] text-stone-500">{w.note}</p>}
+                        </div>
+                        <span className="text-[10px] bg-stone-200/80 text-stone-600 px-2.5 py-1 rounded-full font-semibold">
+                          Afventer godkendelse... ⏳
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
