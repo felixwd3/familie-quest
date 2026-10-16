@@ -22,11 +22,10 @@ export default function Home() {
   const [newWishNote, setNewWishNote] = useState<string>('');
   const [submittingWish, setSubmittingWish] = useState<boolean>(false);
 
-  // Vores nye lækre Toast-notifikationssystem
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'warning' } | null>(null);
 
-  // --- PIN KODE SYSTEM TIL VOKSNE ---
-  const COMMON_PIN = '1234'; // Standard PIN-kode
+  // PIN KODE
+  const COMMON_PIN = '1234'; 
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
   const [tempSelectedUser, setTempSelectedUser] = useState<string>('');
   const [pinInput, setPinInput] = useState<string>('');
@@ -67,7 +66,6 @@ export default function Home() {
       if (usersData) {
         setUsers(usersData);
         if (!selectedUser && usersData.length > 0) {
-          // Default vælg barn, hvis man åbner appen første gang (for at undgå pin-kode ved load)
           const childUser = usersData.find(u => u.role === 'child');
           setSelectedUser(childUser ? childUser.id : usersData[0].id);
         }
@@ -88,7 +86,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClient]);
 
-  // Håndtering af profil-skift med PIN-lås
   const handleUserSelect = (userId: string) => {
     if (userId === selectedUser) return;
     const targetUser = users.find(u => u.id === userId);
@@ -105,7 +102,7 @@ export default function Home() {
   };
 
   const handlePinInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.replace(/\D/g, ''); // Kun tal tilladt
+    const val = e.target.value.replace(/\D/g, ''); 
     setPinInput(val);
     setPinError(false);
 
@@ -140,6 +137,7 @@ export default function Home() {
     }
   };
 
+  // ENKELT OPGAVE
   const completeTask = async (task: Task) => {
     if (!selectedUser) return;
     const currentUser = users.find((u) => u.id === selectedUser);
@@ -174,6 +172,53 @@ export default function Home() {
     } catch (err) {
       console.error('Fejl ved gemning af opgave:', err);
       showToast('Der opstod en fejl. Prøv igen.', 'warning');
+    }
+  };
+
+  // FÆLLES 10-MINUTTERS OPRYDNING MED MUSIK (CO-OP)
+  const completeFamilyCleanup = async () => {
+    if (!confirm('Har I sat musik på og ryddet op sammen i 10 minutter? 🎵')) return;
+
+    const xpPerPerson = 30;
+    let totalGoalBoost = 0;
+
+    try {
+      // Giv 30 XP til alle brugere
+      const updatedUsers = users.map(u => {
+        totalGoalBoost += xpPerPerson;
+        return {
+          ...u,
+          total_xp: (u.total_xp || 0) + xpPerPerson,
+          spendable_xp: (u.spendable_xp || 0) + xpPerPerson
+        };
+      });
+
+      // Opdater i databasen for hver bruger
+      for (const u of updatedUsers) {
+        await supabase.from('users').update({ total_xp: u.total_xp, spendable_xp: u.spendable_xp }).eq('id', u.id);
+      }
+      setUsers(updatedUsers);
+
+      // Giv point til Fællesmålet
+      if (activeGoal) {
+        const newGoalXp = activeGoal.current_xp + totalGoalBoost;
+        await supabase.from('family_goals').update({ current_xp: newGoalXp }).eq('id', activeGoal.id);
+        setActiveGoal({ ...activeGoal, current_xp: newGoalXp });
+        
+        if (newGoalXp >= activeGoal.target_xp && activeGoal.current_xp < activeGoal.target_xp) {
+          triggerGrandConfetti();
+          showToast(`🎉 KÆMPE TILLYKKE! Familien har nået målet!`, 'success');
+        } else {
+          triggerGrandConfetti();
+          showToast(`🎵 Episk holdindsats! +${xpPerPerson} XP til alle og +${totalGoalBoost} XP til målet!`, 'success');
+        }
+      } else {
+        triggerGrandConfetti();
+        showToast(`🎵 Episk holdindsats! +${xpPerPerson} XP til alle!`, 'success');
+      }
+    } catch (err) {
+      console.error('Fejl ved fælles oprydning:', err);
+      showToast('Fejl ved gemning.', 'warning');
     }
   };
 
@@ -306,11 +351,13 @@ export default function Home() {
   
   const myFixedTasks = tasks.filter(t => t.is_fixed && t.assigned_to === selectedUser);
   const unassignedFixedTasks = tasks.filter(t => t.is_fixed && !t.assigned_to);
-  const freeTasks = tasks.filter(t => !t.is_fixed);
+  
+  // FILTRERING: Vis kun de frie tasks, der matcher brugerens rolle
+  const allowedFreeTasks = tasks.filter(t => !t.is_fixed && (t.target_role === activeUserData?.role || !t.target_role));
 
   const goalProgress = activeGoal ? Math.min(100, Math.round((activeGoal.current_xp / activeGoal.target_xp) * 100)) : 0;
-  const categories = ['Alle', ...Array.from(new Set(tasks.map((t) => t.category)))];
-  const filteredTasks = categoryFilter === 'Alle' ? freeTasks : freeTasks.filter((t) => t.category === categoryFilter);
+  const categories = ['Alle', ...Array.from(new Set(allowedFreeTasks.map((t) => t.category)))];
+  const filteredTasks = categoryFilter === 'Alle' ? allowedFreeTasks : allowedFreeTasks.filter((t) => t.category === categoryFilter);
 
   return (
     <main className="min-h-screen bg-[#FAF9F6] text-stone-800 pb-20 antialiased relative">
@@ -423,7 +470,7 @@ export default function Home() {
           </section>
         )}
 
-        {/* Profil-kort med LÅS på voksne */}
+        {/* Profil-kort */}
         <section>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {users.map((u) => {
@@ -493,55 +540,77 @@ export default function Home() {
         {activeTab === 'quests' && (
           <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
             
-            {/* DINE FASTE TJANSER */}
-            <section className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
-                <span className="text-xl">🎯</span>
-                <h3 className="text-base font-black text-stone-900">Dine Faste Tjanser Denne Uge</h3>
+            {/* 🎵 10-MINUTTERS FÆLLES OPRYDNING */}
+            <section className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-3xl p-1 relative overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 group">
+              <div className="bg-white/95 backdrop-blur-sm rounded-[22px] p-5 flex flex-col sm:flex-row justify-between items-center gap-4 relative z-10">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-3xl shadow-inner group-hover:scale-110 transition-transform duration-300">
+                    🎵
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black bg-gradient-to-r from-indigo-600 to-pink-500 bg-clip-text text-transparent">10-Minutters Power Oprydning</h3>
+                    <p className="text-xs font-bold text-stone-500 mt-0.5">Sæt musik på og ryd op <span className="underline">sammen</span>. Belønner alle i familien!</p>
+                  </div>
+                </div>
+                <button onClick={completeFamilyCleanup} className="w-full sm:w-auto bg-stone-900 hover:bg-stone-800 text-white font-black text-xs px-6 py-3 rounded-xl shadow-md active:scale-95 transition-all cursor-pointer">
+                  Udført Sammen! 🚀
+                </button>
               </div>
-              
-              {myFixedTasks.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {myFixedTasks.map((task) => {
-                    const xp = Math.round(task.duration_minutes * task.difficulty);
-                    return (
-                      <div key={task.id} className="group bg-white border border-stone-200/80 hover:border-emerald-300 p-4 rounded-2xl flex justify-between items-center shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 bg-stone-50 rounded-xl flex items-center justify-center text-2xl border border-stone-100 group-hover:scale-110 transition-transform duration-300">
-                            {getCategoryIcon(task.category)}
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-stone-900 text-sm leading-tight">{task.title}</h4>
-                            <p className="text-[11px] font-medium text-stone-500 mt-1 bg-stone-100 inline-block px-2 py-0.5 rounded-md">{task.duration_minutes} min</p>
-                          </div>
-                        </div>
-                        <button onClick={() => completeTask(task)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black px-4 py-2.5 rounded-xl transition-all shadow-md hover:shadow-emerald-500/30 active:scale-95 shrink-0">
-                          Klar (+{xp})
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="bg-stone-50 border border-stone-200 border-dashed rounded-2xl p-6 text-center">
-                  <span className="text-3xl block mb-2">🏖️</span>
-                  <p className="text-sm text-stone-500 font-medium">Ingen faste, tunge opgaver til dig i denne uge. Nyd det!</p>
-                </div>
-              )}
-              
-              {isAdult && unassignedFixedTasks.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mt-4 flex items-center gap-3 shadow-sm">
-                  <span className="text-2xl">⚠️</span>
-                  <p className="text-xs text-amber-800 font-bold leading-relaxed">Der er faste opgaver, som mangler en ejer. Tryk "Roter faste tjanser" i kontrolpanelet under shoppen.</p>
-                </div>
-              )}
             </section>
 
-            {/* FÆLLES FRIE QUESTS */}
+            {/* DINE FASTE TJANSER (KUN FOR VOKSNE) */}
+            {isAdult && (
+              <section className="space-y-4">
+                <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
+                  <span className="text-xl">🎯</span>
+                  <h3 className="text-base font-black text-stone-900">Dine Faste Tjanser Denne Uge</h3>
+                </div>
+                
+                {myFixedTasks.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {myFixedTasks.map((task) => {
+                      const xp = Math.round(task.duration_minutes * task.difficulty);
+                      return (
+                        <div key={task.id} className="group bg-white border border-stone-200/80 hover:border-emerald-300 p-4 rounded-2xl flex justify-between items-center shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 bg-stone-50 rounded-xl flex items-center justify-center text-2xl border border-stone-100 group-hover:scale-110 transition-transform duration-300">
+                              {getCategoryIcon(task.category)}
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-stone-900 text-sm leading-tight">{task.title}</h4>
+                              <p className="text-[11px] font-medium text-stone-500 mt-1 bg-stone-100 inline-block px-2 py-0.5 rounded-md">{task.duration_minutes} min</p>
+                            </div>
+                          </div>
+                          <button onClick={() => completeTask(task)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black px-4 py-2.5 rounded-xl transition-all shadow-md hover:shadow-emerald-500/30 active:scale-95 shrink-0">
+                            Klar (+{xp})
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-stone-50 border border-stone-200 border-dashed rounded-2xl p-6 text-center">
+                    <span className="text-3xl block mb-2">🏖️</span>
+                    <p className="text-sm text-stone-500 font-medium">Ingen faste, tunge opgaver til dig i denne uge. Nyd det!</p>
+                  </div>
+                )}
+                
+                {unassignedFixedTasks.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mt-4 flex items-center gap-3 shadow-sm">
+                    <span className="text-2xl">⚠️</span>
+                    <p className="text-xs text-amber-800 font-bold leading-relaxed">Der er faste opgaver, som mangler en ejer. Tryk "Roter faste tjanser" i kontrolpanelet under shoppen.</p>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* FRIE QUESTS (Filtreret efter personens rolle) */}
             <section className="space-y-4">
               <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
                 <span className="text-xl">🌟</span>
-                <h3 className="text-base font-black text-stone-900">Frie Fælles Quests</h3>
+                <h3 className="text-base font-black text-stone-900">
+                  {isAdult ? "Frie Fælles Quests" : "Dine Egne Quests"}
+                </h3>
               </div>
 
               {/* Kategori Piller */}

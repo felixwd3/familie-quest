@@ -15,6 +15,7 @@ export interface Task {
   category: string;
   is_fixed?: boolean;
   assigned_to?: string | null;
+  target_role?: 'adult' | 'child' | 'all';
 }
 
 export interface EventLog {
