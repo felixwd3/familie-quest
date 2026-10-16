@@ -13,6 +13,8 @@ export interface Task {
   duration_minutes: number;
   difficulty: 1.0 | 1.25 | 1.5;
   category: string;
+  is_fixed?: boolean;
+  assigned_to?: string | null;
 }
 
 export interface EventLog {
@@ -50,11 +52,11 @@ export interface Wish {
   created_at: string;
 }
 
-export interface WeeklySchedule {
+export interface FamilyGoal {
   id: string;
-  user_id: string;
-  area_name: string;
-  description?: string;
-  icon?: string;
-  day_of_week?: string;
+  title: string;
+  target_xp: number;
+  current_xp: number;
+  is_active: boolean;
+  created_at: string;
 }

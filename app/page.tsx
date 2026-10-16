@@ -2,21 +2,20 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { User, Task, Reward, Wish, WeeklySchedule } from '@/lib/types';
+import { User, Task, Reward, Wish, FamilyGoal } from '@/lib/types';
 
 export default function Home() {
   const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [wishes, setWishes] = useState<Wish[]>([]);
-  const [schedules, setSchedules] = useState<WeeklySchedule[]>([]);
+  const [activeGoal, setActiveGoal] = useState<FamilyGoal | null>(null);
+  
   const [selectedUser, setSelectedUser] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'quests' | 'schedule' | 'shop'>('quests');
-  const [categoryFilter, setCategoryFilter] = useState<string>('Alle');
+  const [activeTab, setActiveTab] = useState<'quests' | 'shop'>('quests');
   const [loading, setLoading] = useState<boolean>(true);
   const [isClient, setIsClient] = useState<boolean>(false);
 
-  // Form til nyt ønske
   const [newWishTitle, setNewWishTitle] = useState<string>('');
   const [newWishNote, setNewWishNote] = useState<string>('');
   const [submittingWish, setSubmittingWish] = useState<boolean>(false);
@@ -25,44 +24,36 @@ export default function Home() {
     setIsClient(true);
   }, []);
 
-  useEffect(() => {
-    if (!isClient) return;
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const { data: usersData } = await supabase.from('users').select('*').order('created_at', { ascending: true });
+      const { data: tasksData } = await supabase.from('tasks').select('*');
+      const { data: rewardsData } = await supabase.from('rewards').select('*');
+      const { data: wishesData } = await supabase.from('wishes').select('*');
+      const { data: goalData } = await supabase.from('family_goals').select('*').eq('is_active', true).single();
 
-    async function fetchData() {
-      try {
-        setLoading(true);
-        const { data: usersData } = await supabase.from('users').select('*');
-        const { data: tasksData } = await supabase.from('tasks').select('*');
-        const { data: rewardsData } = await supabase.from('rewards').select('*');
-        const { data: wishesData } = await supabase.from('wishes').select('*');
-        const { data: schedulesData } = await supabase.from('weekly_schedules').select('*');
-
-        if (usersData) {
-          setUsers(usersData);
-          if (usersData.length > 0) setSelectedUser(usersData[0].id);
-        }
-        if (tasksData) setTasks(tasksData);
-        if (rewardsData) setRewards(rewardsData);
-        if (wishesData) setWishes(wishesData);
-        if (schedulesData) setSchedules(schedulesData);
-      } catch (err) {
-        console.error('Fejl ved indlæsning af data:', err);
-      } finally {
-        setLoading(false);
+      if (usersData) {
+        setUsers(usersData);
+        // Bevar valgt bruger hvis den findes, ellers vælg den første
+        if (!selectedUser && usersData.length > 0) setSelectedUser(usersData[0].id);
       }
+      if (tasksData) setTasks(tasksData);
+      if (rewardsData) setRewards(rewardsData);
+      if (wishesData) setWishes(wishesData);
+      if (goalData) setActiveGoal(goalData);
+    } catch (err) {
+      console.error('Fejl ved indlæsning af data:', err);
+    } finally {
+      setLoading(false);
     }
-
-    fetchData();
-  }, [isClient]);
-
-  // Beregn niveau ud fra total XP
-  const calculateLevel = (totalXp: number = 0) => {
-    const level = Math.floor(totalXp / 100) + 1;
-    const progress = totalXp % 100;
-    return { level, progress };
   };
 
-  // Ikoner til opgaver
+  useEffect(() => {
+    if (isClient) fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClient]);
+
   const getCategoryIcon = (category: string) => {
     switch (category) {
       case 'Køkken': return '🍳';
@@ -76,575 +67,388 @@ export default function Home() {
     }
   };
 
-  // Registrer gennemført opgave
+  // Udfør Opgave -> Giver XP til bruger OG Fælles Familiemål
   const completeTask = async (task: Task) => {
     if (!selectedUser) return;
-
-    const xpEarned = Math.round(task.duration_minutes * task.difficulty);
     const currentUser = users.find((u) => u.id === selectedUser);
-
     if (!currentUser) return;
 
-    try {
-      await supabase.from('event_logs').insert([
-        {
-          user_id: selectedUser,
-          task_id: task.id,
-          xp_earned: xpEarned,
-        },
-      ]);
+    const xpEarned = Math.round(task.duration_minutes * task.difficulty);
 
+    try {
+      // 1. Gem log
+      await supabase.from('event_logs').insert([{ user_id: selectedUser, task_id: task.id, xp_earned: xpEarned }]);
+
+      // 2. Opdater bruger
       const newTotalXp = (currentUser.total_xp || 0) + xpEarned;
       const newSpendableXp = (currentUser.spendable_xp || 0) + xpEarned;
+      await supabase.from('users').update({ total_xp: newTotalXp, spendable_xp: newSpendableXp }).eq('id', selectedUser);
+      setUsers(users.map((u) => u.id === selectedUser ? { ...u, total_xp: newTotalXp, spendable_xp: newSpendableXp } : u));
 
-      await supabase
-        .from('users')
-        .update({ total_xp: newTotalXp, spendable_xp: newSpendableXp })
-        .eq('id', selectedUser);
-
-      setUsers(
-        users.map((u) =>
-          u.id === selectedUser
-            ? { ...u, total_xp: newTotalXp, spendable_xp: newSpendableXp }
-            : u
-        )
-      );
-
-      alert(`🌱 Flot klaret! ${currentUser.name} optjente +${xpEarned} XP!`);
+      // 3. Opdater fælles familiemål
+      if (activeGoal) {
+        const newGoalXp = activeGoal.current_xp + xpEarned;
+        await supabase.from('family_goals').update({ current_xp: newGoalXp }).eq('id', activeGoal.id);
+        setActiveGoal({ ...activeGoal, current_xp: newGoalXp });
+        
+        if (newGoalXp >= activeGoal.target_xp && activeGoal.current_xp < activeGoal.target_xp) {
+          alert(`🎉 KÆMPE TILLYKKE! Familien har nået målet: ${activeGoal.title}!`);
+        } else {
+          alert(`🌱 +${xpEarned} XP! Både til dig og fællespuljen!`);
+        }
+      } else {
+        alert(`🌱 +${xpEarned} XP til ${currentUser.name}!`);
+      }
     } catch (err) {
       console.error('Fejl ved gemning af opgave:', err);
     }
   };
 
-  // Indløs belønning
   const buyReward = async (reward: Reward) => {
     const currentUser = users.find((u) => u.id === selectedUser);
     if (!currentUser) return;
-
     if ((currentUser.spendable_xp || 0) < reward.cost_xp) {
-      alert(`Du mangler ${reward.cost_xp - (currentUser.spendable_xp || 0)} XP for at kunne indløse ${reward.title}.`);
+      alert(`Du mangler XP for at kunne indløse ${reward.title}.`);
       return;
     }
-
     if (!confirm(`Vil du indløse "${reward.title}" for ${reward.cost_xp} XP?`)) return;
 
     try {
-      await supabase.from('purchases').insert([
-        {
-          user_id: selectedUser,
-          reward_id: reward.id,
-          cost_xp: reward.cost_xp,
-          status: 'pending',
-        },
-      ]);
-
+      await supabase.from('purchases').insert([{ user_id: selectedUser, reward_id: reward.id, cost_xp: reward.cost_xp, status: 'pending' }]);
       const newSpendableXp = currentUser.spendable_xp - reward.cost_xp;
-      await supabase
-        .from('users')
-        .update({ spendable_xp: newSpendableXp })
-        .eq('id', selectedUser);
-
-      setUsers(
-        users.map((u) =>
-          u.id === selectedUser ? { ...u, spendable_xp: newSpendableXp } : u
-        )
-      );
-
+      await supabase.from('users').update({ spendable_xp: newSpendableXp }).eq('id', selectedUser);
+      setUsers(users.map((u) => u.id === selectedUser ? { ...u, spendable_xp: newSpendableXp } : u));
       alert(`🎁 Tillykke! Du har indløst ${reward.title}.`);
     } catch (err) {
       console.error('Fejl ved køb:', err);
     }
   };
 
-  // Send nyt ønske
   const submitWish = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newWishTitle.trim() || !selectedUser) return;
-
     setSubmittingWish(true);
     try {
-      const { data, error } = await supabase
-        .from('wishes')
-        .insert([
-          {
-            user_id: selectedUser,
-            title: newWishTitle.trim(),
-            note: newWishNote.trim(),
-            status: 'pending',
-          },
-        ])
-        .select();
-
+      const { data, error } = await supabase.from('wishes').insert([{ user_id: selectedUser, title: newWishTitle.trim(), note: newWishNote.trim(), status: 'pending' }]).select();
       if (error) throw error;
-
       if (data) setWishes([...wishes, data[0]]);
-
       setNewWishTitle('');
       setNewWishNote('');
       alert('🌟 Ønsket er sendt videre til godkendelse!');
     } catch (err) {
-      console.error('Fejl ved oprettelse af ønske:', err);
+      console.error('Fejl:', err);
     } finally {
       setSubmittingWish(false);
     }
   };
 
-  // Godkend Ønske
+  // ADMIN: Godkend ønske
   const approveWish = async (wish: Wish) => {
     const costInput = prompt(`Angiv pris i XP for "${wish.title}":`, '100');
     if (!costInput) return;
-
     const costXp = parseInt(costInput, 10);
     if (isNaN(costXp) || costXp <= 0) return;
 
     try {
-      const { data: newReward, error: rewardError } = await supabase
-        .from('rewards')
-        .insert([
-          {
-            title: wish.title,
-            description: wish.note || 'Ønske indsendt af familiemedlem',
-            cost_xp: costXp,
-            icon: '🎁',
-            category: 'Ønsker',
-          },
-        ])
-        .select();
-
-      if (rewardError) throw rewardError;
-
+      const { data: newReward, error } = await supabase.from('rewards').insert([{ title: wish.title, description: wish.note || 'Ønske', cost_xp: costXp, icon: '🎁', category: 'Ønsker' }]).select();
+      if (error) throw error;
       await supabase.from('wishes').update({ status: 'approved' }).eq('id', wish.id);
-
       if (newReward) setRewards([...rewards, newReward[0]]);
       setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'approved' } : w)));
-
-      alert(`✅ Ønsket "${wish.title}" er nu godkendt til ${costXp} XP!`);
     } catch (err) {
-      console.error('Fejl ved godkendelse:', err);
+      console.error('Fejl:', err);
     }
   };
 
   const rejectWish = async (wish: Wish) => {
     if (!confirm(`Afvis ønsket "${wish.title}"?`)) return;
+    await supabase.from('wishes').update({ status: 'rejected' }).eq('id', wish.id);
+    setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'rejected' } : w)));
+  };
+
+  // ADMIN: Opret Nyt Familiemål
+  const createNewFamilyGoal = async () => {
+    const title = prompt('Hvad skal være familiens nye fælles mål? (f.eks. Tur i Tivoli)');
+    if (!title) return;
+    const targetInput = prompt(`Hvor mange XP skal det koste at nå "${title}"?`, '2000');
+    if (!targetInput) return;
+    const targetXp = parseInt(targetInput, 10);
 
     try {
-      await supabase.from('wishes').update({ status: 'rejected' }).eq('id', wish.id);
-      setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'rejected' } : w)));
+      // Deaktiver gamle mål
+      if (activeGoal) await supabase.from('family_goals').update({ is_active: false }).eq('id', activeGoal.id);
+      // Opret nyt
+      const { data, error } = await supabase.from('family_goals').insert([{ title, target_xp: targetXp, is_active: true }]).select();
+      if (error) throw error;
+      if (data) setActiveGoal(data[0]);
+      alert(`🎯 Nyt familiemål oprettet! Nu kæmper vi for: ${title}`);
     } catch (err) {
-      console.error('Fejl ved afvisning:', err);
+      console.error(err);
+    }
+  };
+
+  // ADMIN: Roter faste tjanser
+  const rotateChores = async () => {
+    if (!confirm('Vil du rotere de faste opgaver, så voksne bytter ansvarsområder?')) return;
+    
+    const adults = users.filter(u => u.role === 'adult');
+    if (adults.length < 2) {
+      alert('Der skal være mindst 2 voksne for at bytte faste tjanser.');
+      return;
+    }
+    
+    const adult1 = adults[0].id;
+    const adult2 = adults[1].id;
+    const fixedTasks = tasks.filter(t => t.is_fixed);
+
+    try {
+      for (const task of fixedTasks) {
+        // Hvis den ikke er tildelt, giv den til adult1, ellers byt
+        const newAssignee = task.assigned_to === adult1 ? adult2 : adult1;
+        await supabase.from('tasks').update({ assigned_to: newAssignee }).eq('id', task.id);
+      }
+      alert('🔄 Opgaverne er nu byttet!');
+      fetchData(); // Genindlæs for at se ændringerne
+    } catch (err) {
+      console.error(err);
     }
   };
 
   if (!isClient || loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-stone-50 text-stone-600">
-        <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-2 border-stone-400 border-t-stone-800 rounded-full animate-spin mx-auto"></div>
-          <p className="text-sm font-medium tracking-wide">Henter FamilieQuest...</p>
-        </div>
+        <div className="w-8 h-8 border-2 border-stone-400 border-t-stone-800 rounded-full animate-spin"></div>
       </div>
     );
   }
 
   const activeUserData = users.find((u) => u.id === selectedUser);
   const isAdult = activeUserData?.role === 'adult';
-  const userWishes = wishes.filter((w) => w.user_id === selectedUser && w.status === 'pending');
-  const pendingWishesAll = wishes.filter((w) => w.status === 'pending');
+  
+  // Opdel opgaver
+  const myFixedTasks = tasks.filter(t => t.is_fixed && t.assigned_to === selectedUser);
+  const unassignedFixedTasks = tasks.filter(t => t.is_fixed && !t.assigned_to);
+  const freeTasks = tasks.filter(t => !t.is_fixed);
 
-  const categories = ['Alle', ...Array.from(new Set(tasks.map((t) => t.category)))];
-  const filteredTasks = categoryFilter === 'Alle' ? tasks : tasks.filter((t) => t.category === categoryFilter);
+  // Familiemål progress
+  const goalProgress = activeGoal ? Math.min(100, Math.round((activeGoal.current_xp / activeGoal.target_xp) * 100)) : 0;
 
   return (
     <main className="min-h-screen bg-[#FAF9F6] text-stone-800 pb-16 antialiased">
       {/* Top Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-stone-200/80 sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-3.5 flex justify-between items-center gap-4">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-stone-900 text-stone-50 flex items-center justify-center text-sm font-bold shadow-sm">
-              FQ
-            </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight text-stone-900">FamilieQuest</h1>
-              <p className="text-[11px] text-stone-500 font-medium">Hverdagens balancerede overblik</p>
-            </div>
+            <div className="w-9 h-9 rounded-full bg-stone-900 text-stone-50 flex items-center justify-center text-sm font-bold shadow-sm">FQ</div>
+            <h1 className="text-lg font-bold tracking-tight text-stone-900 hidden sm:block">FamilieQuest</h1>
           </div>
 
-          {/* Aktiv bruger-vælger */}
           <div className="flex items-center gap-2 bg-stone-100/80 p-1 pl-3 rounded-full border border-stone-200/60">
-            <span className="text-xs text-stone-500 font-medium hidden sm:inline">Aktiv:</span>
+            <span className="text-xs text-stone-500 font-medium hidden sm:inline">Spiller:</span>
             <select
               value={selectedUser}
               onChange={(e) => setSelectedUser(e.target.value)}
-              className="bg-white text-stone-800 font-semibold border border-stone-200 rounded-full px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer shadow-sm"
+              className="bg-white text-stone-800 font-semibold border border-stone-200 rounded-full px-3 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer"
             >
               {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} ({u.spendable_xp || 0} XP)
-                </option>
+                <option key={u.id} value={u.id}>{u.name}</option>
               ))}
             </select>
           </div>
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto px-4 pt-6 space-y-8">
-        {/* Profil-Kort */}
-        <section>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {users.map((u) => {
-              const { level, progress } = calculateLevel(u.total_xp);
-              const isSelected = u.id === selectedUser;
-
-              return (
-                <div
-                  key={u.id}
-                  onClick={() => setSelectedUser(u.id)}
-                  className={`relative rounded-2xl p-4 transition cursor-pointer border ${
-                    isSelected
-                      ? 'bg-white border-stone-800 shadow-md shadow-stone-200/60 ring-1 ring-stone-800/10'
-                      : 'bg-white/60 border-stone-200/80 hover:bg-white hover:border-stone-300'
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h3 className="font-bold text-stone-900 text-base">{u.name}</h3>
-                      <p className="text-xs text-stone-500 font-medium mt-0.5">Niveau {level}</p>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full text-xs border border-emerald-200/60">
-                        ✨ {u.spendable_xp || 0} XP
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Fremskridtslinje */}
-                  <div className="space-y-1.5 mt-2">
-                    <div className="flex justify-between text-[11px] font-medium text-stone-500">
-                      <span>Niveaufremgang</span>
-                      <span>{progress}/100</span>
-                    </div>
-                    <div className="w-full bg-stone-100 rounded-full h-1.5 overflow-hidden border border-stone-200/50">
-                      <div
-                        className="bg-stone-800 h-1.5 rounded-full transition-all duration-500"
-                        style={{ width: `${progress}%` }}
-                      ></div>
-                    </div>
-                  </div>
+      <div className="max-w-3xl mx-auto px-4 pt-6 space-y-8">
+        
+        {/* FÆLLES FAMILIEMÅL */}
+        {activeGoal && (
+          <section className="bg-white rounded-2xl p-6 border border-stone-200/90 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full blur-3xl -mr-10 -mt-10 opacity-70"></div>
+            <div className="relative z-10">
+              <div className="flex justify-between items-end mb-3">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-1">Fælles Familiemål</h2>
+                  <h3 className="text-xl font-black text-stone-900">{activeGoal.title}</h3>
                 </div>
-              );
-            })}
-          </div>
-        </section>
+                <div className="text-right">
+                  <span className="text-sm font-bold text-stone-700">{activeGoal.current_xp}</span>
+                  <span className="text-xs text-stone-400"> / {activeGoal.target_xp} XP</span>
+                </div>
+              </div>
+              
+              <div className="w-full bg-stone-100 rounded-full h-3 overflow-hidden border border-stone-200/50">
+                <div 
+                  className="bg-emerald-500 h-full rounded-full transition-all duration-1000 ease-out relative"
+                  style={{ width: `${goalProgress}%` }}
+                >
+                  <div className="absolute inset-0 bg-white/20 w-full animate-pulse"></div>
+                </div>
+              </div>
+              {goalProgress >= 100 && (
+                <p className="text-xs font-bold text-emerald-600 mt-2 text-center animate-bounce">Målet er nået! 🎉</p>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* Fanebladsnavigation */}
-        <div className="flex bg-stone-200/60 p-1 rounded-full max-w-sm mx-auto border border-stone-200/80">
+        <div className="flex bg-stone-200/60 p-1 rounded-full max-w-xs mx-auto border border-stone-200/80">
           <button
             onClick={() => setActiveTab('quests')}
-            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center ${
-              activeTab === 'quests'
-                ? 'bg-white text-stone-900 shadow-sm'
-                : 'text-stone-500 hover:text-stone-800'
-            }`}
+            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center ${activeTab === 'quests' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-800'}`}
           >
             Opgaver
           </button>
           <button
-            onClick={() => setActiveTab('schedule')}
-            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center ${
-              activeTab === 'schedule'
-                ? 'bg-white text-stone-900 shadow-sm'
-                : 'text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            📅 Ugeplan
-          </button>
-          <button
             onClick={() => setActiveTab('shop')}
-            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center flex items-center justify-center gap-1 ${
-              activeTab === 'shop'
-                ? 'bg-white text-stone-900 shadow-sm'
-                : 'text-stone-500 hover:text-stone-800'
-            }`}
+            className={`flex-1 py-2 rounded-full font-bold text-xs transition text-center flex items-center justify-center gap-1.5 ${activeTab === 'shop' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-800'}`}
           >
-            <span>Shoppen</span>
-            {activeUserData && (
-              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
-                {activeUserData.spendable_xp || 0}
-              </span>
-            )}
+            <span>BørneShop</span>
+            {activeUserData && <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">{activeUserData.spendable_xp || 0}</span>}
           </button>
         </div>
 
         {/* FANE 1: OPGAVER */}
         {activeTab === 'quests' && (
-          <section className="space-y-5">
-            {/* Kategori-Piller */}
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setCategoryFilter(cat)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition whitespace-nowrap border ${
-                    categoryFilter === cat
-                      ? 'bg-stone-900 border-stone-900 text-white shadow-sm'
-                      : 'bg-white border-stone-200 text-stone-600 hover:border-stone-300'
-                  }`}
-                >
-                  {cat !== 'Alle' && `${getCategoryIcon(cat)} `}{cat}
-                </button>
-              ))}
-            </div>
-
-            {/* Opgaveliste */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {filteredTasks.map((task) => {
-                const xp = Math.round(task.duration_minutes * task.difficulty);
-                const icon = getCategoryIcon(task.category);
-
-                return (
-                  <div
-                    key={task.id}
-                    className="bg-white border border-stone-200/90 hover:border-stone-400/80 p-4 rounded-2xl transition shadow-sm flex justify-between items-center gap-4"
-                  >
-                    <div className="flex items-center gap-3.5">
-                      <div className="w-10 h-10 rounded-xl bg-stone-100 border border-stone-200/60 flex items-center justify-center text-xl shrink-0">
-                        {icon}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-stone-900 text-sm">{task.title}</h3>
-                        <p className="text-xs text-stone-500 font-medium mt-0.5">
-                          {task.category} • {task.duration_minutes} min
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => completeTask(task)}
-                      className="bg-stone-900 hover:bg-stone-800 active:bg-stone-950 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition cursor-pointer shrink-0"
-                    >
-                      +{xp} XP
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* FANE 2: UGEPLAN & TJENESTER */}
-        {activeTab === 'schedule' && (
-          <section className="space-y-6">
-            <div>
-              <h2 className="text-base font-bold text-stone-900">Ugens Ansvarsområder & Tjenester</h2>
-              <p className="text-xs text-stone-500 mt-0.5">
-                Fast overblik over fordelingen, så alle ved, hvem der har tjansen hvornår.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {users.map((user) => {
-                const userSchedules = schedules.filter((s) => s.user_id === user.id);
-
-                return (
-                  <div key={user.id} className="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm space-y-3">
-                    <div className="flex justify-between items-center border-b border-stone-100 pb-3">
-                      <div>
-                        <h3 className="font-bold text-stone-900 text-base">{user.name}</h3>
-                        <p className="text-xs text-stone-500">{user.role === 'adult' ? 'Voksen' : 'Barn'}</p>
-                      </div>
-                      <span className="text-xs bg-stone-100 text-stone-700 px-2.5 py-1 rounded-full font-semibold">
-                        {userSchedules.length} ansvarsområder
-                      </span>
-                    </div>
-
-                    {userSchedules.length > 0 ? (
-                      <div className="space-y-2.5">
-                        {userSchedules.map((sched) => (
-                          <div key={sched.id} className="bg-stone-50 p-3 rounded-xl border border-stone-200/60 flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3">
-                              <span className="text-xl">{sched.icon || '📌'}</span>
-                              <div>
-                                <p className="font-bold text-stone-900 text-xs">{sched.area_name}</p>
-                                {sched.description && (
-                                  <p className="text-[11px] text-stone-500">{sched.description}</p>
-                                )}
-                              </div>
-                            </div>
-                            <span className="text-[10px] font-bold bg-white text-stone-700 border border-stone-200 px-2 py-0.5 rounded-md whitespace-nowrap">
-                              {sched.day_of_week || 'Hele Ugen'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-stone-400 italic py-2">Ingen specifikke tildelte ansvarsområder i denne uge.</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* FANE 3: BØRNESHOP & ØNSKER */}
-        {activeTab === 'shop' && (
-          <section className="space-y-7">
-            {/* FORÆLDRE GODKENDELSE */}
-            {isAdult && pendingWishesAll.length > 0 && (
-              <div className="bg-amber-50/70 p-5 rounded-2xl border border-amber-200/80 space-y-3">
-                <div>
-                  <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2">
-                    <span>💡</span> Indkomne Ønsker til behandling ({pendingWishesAll.length})
-                  </h3>
-                  <p className="text-xs text-amber-700/80 mt-0.5">
-                    Angiv en pris i XP for at gøre ønsket til en tilgængelig belønning.
-                  </p>
-                </div>
-
-                <div className="space-y-2 pt-1">
-                  {pendingWishesAll.map((wish) => {
-                    const wishUser = users.find((u) => u.id === wish.user_id);
+          <div className="space-y-8">
+            
+            {/* DINE FASTE TJANSER */}
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-stone-900 border-b border-stone-200 pb-2">🎯 Dine Faste Tjanser Denne Uge</h3>
+              {myFixedTasks.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {myFixedTasks.map((task) => {
+                    const xp = Math.round(task.duration_minutes * task.difficulty);
                     return (
-                      <div
-                        key={wish.id}
-                        className="bg-white p-3.5 rounded-xl border border-amber-200 flex justify-between items-center flex-wrap gap-3 shadow-sm"
-                      >
-                        <div>
-                          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">
-                            Ønske fra {wishUser?.name || 'Barn'}
-                          </span>
-                          <p className="font-bold text-stone-900 text-sm">{wish.title}</p>
-                          {wish.note && <p className="text-xs text-stone-500">{wish.note}</p>}
+                      <div key={task.id} className="bg-stone-50 border border-stone-200 p-3.5 rounded-xl flex justify-between items-center shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{getCategoryIcon(task.category)}</span>
+                          <div>
+                            <h4 className="font-bold text-stone-900 text-sm">{task.title}</h4>
+                            <p className="text-[11px] text-stone-500">{task.duration_minutes} min</p>
+                          </div>
                         </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => approveWish(wish)}
-                            className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition cursor-pointer shadow-sm"
-                          >
-                            Godkend & Sæt XP
-                          </button>
-                          <button
-                            onClick={() => rejectWish(wish)}
-                            className="bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
-                          >
-                            Afvis
-                          </button>
-                        </div>
+                        <button onClick={() => completeTask(task)} className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shrink-0 shadow-sm">
+                          Klar (+{xp} XP)
+                        </button>
                       </div>
                     );
                   })}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-xs text-stone-500 italic">Du har ingen faste, tunge opgaver tildelt i denne uge. Nyd det!</p>
+              )}
+              
+              {/* Viser ikke-tildelte faste tjanser hvis forældre har glemt at rotere/tildele dem */}
+              {isAdult && unassignedFixedTasks.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl mt-2">
+                  <p className="text-xs text-amber-800 font-semibold mb-2">⚠️ Der er faste opgaver, som mangler en ejer. Tryk "Roter Faste Opgaver" i shoppen.</p>
+                </div>
+              )}
+            </section>
 
-            {/* BELØNNINGSKATALOG */}
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h2 className="text-base font-bold text-stone-900">Belønninger & Hygge</h2>
-                <span className="text-xs text-stone-500 font-medium">
-                  Optjent: <strong className="text-stone-900">{activeUserData?.spendable_xp || 0} XP</strong>
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                {rewards.map((reward) => {
-                  const canAfford = (activeUserData?.spendable_xp || 0) >= reward.cost_xp;
-
+            {/* FÆLLES FRIE QUESTS */}
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-stone-900 border-b border-stone-200 pb-2">🌟 Frie Fælles Quests (Åben for alle)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {freeTasks.map((task) => {
+                  const xp = Math.round(task.duration_minutes * task.difficulty);
                   return (
-                    <div
-                      key={reward.id}
-                      className={`p-4 rounded-2xl border transition flex justify-between items-center gap-4 ${
-                        canAfford
-                          ? 'bg-white border-stone-200 shadow-sm'
-                          : 'bg-stone-50/70 border-stone-200/60 opacity-60'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3.5">
-                        <div className="w-10 h-10 rounded-xl bg-stone-100 border border-stone-200/60 flex items-center justify-center text-xl shrink-0">
-                          {reward.icon}
-                        </div>
+                    <div key={task.id} className="bg-white border border-stone-200 p-3.5 rounded-xl hover:border-stone-300 flex justify-between items-center shadow-2xs transition">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl opacity-80">{getCategoryIcon(task.category)}</span>
                         <div>
-                          <h3 className="font-bold text-stone-900 text-sm">{reward.title}</h3>
-                          <p className="text-xs text-stone-500 mt-0.5">{reward.description}</p>
+                          <h4 className="font-bold text-stone-900 text-xs sm:text-sm">{task.title}</h4>
+                          <p className="text-[10px] sm:text-[11px] text-stone-500">{task.category}</p>
                         </div>
                       </div>
-
-                      <button
-                        onClick={() => buyReward(reward)}
-                        disabled={!canAfford}
-                        className={`text-xs font-bold px-3.5 py-2 rounded-xl transition whitespace-nowrap shrink-0 ${
-                          canAfford
-                            ? 'bg-emerald-700 hover:bg-emerald-800 text-white cursor-pointer shadow-sm'
-                            : 'bg-stone-200 text-stone-400 cursor-not-allowed'
-                        }`}
-                      >
-                        Indløs ({reward.cost_xp} XP)
+                      <button onClick={() => completeTask(task)} className="bg-stone-900 hover:bg-stone-800 text-white text-[10px] sm:text-xs font-bold px-3 py-1.5 rounded-lg transition shrink-0">
+                        +{xp} XP
                       </button>
                     </div>
                   );
                 })}
               </div>
-            </div>
+            </section>
+          </div>
+        )}
 
-            {/* SEND ØNSKE FORMULAR */}
-            <div className="bg-white p-5 rounded-2xl border border-stone-200/90 space-y-4 shadow-sm">
-              <div>
-                <h3 className="text-sm font-bold text-stone-900">Nyt Ønske til Shoppen</h3>
-                <p className="text-xs text-stone-500 mt-0.5">Mangler der noget du vil gemme sammen til?</p>
-              </div>
+        {/* FANE 2: BØRNESHOP & FORÆLDREPANEL */}
+        {activeTab === 'shop' && (
+          <div className="space-y-8">
+            
+            {/* FORÆLDREPANEL (Kun synligt for adults) */}
+            {isAdult && (
+              <section className="bg-stone-100 p-5 rounded-2xl border border-stone-200 space-y-4">
+                <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2"><span>⚙️</span> Forældre Kontrolpanel</h3>
+                
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={createNewFamilyGoal} className="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs px-4 py-2 rounded-lg transition shadow-sm">
+                    🎯 Nyt Familiemål
+                  </button>
+                  <button onClick={rotateChores} className="bg-white border border-stone-300 text-stone-700 font-semibold text-xs px-4 py-2 rounded-lg transition shadow-sm hover:bg-stone-50">
+                    🔄 Roter faste tjanser
+                  </button>
+                </div>
 
-              <form onSubmit={submitWish} className="flex flex-col gap-3">
-                <input
-                  type="text"
-                  placeholder="Hvad ønsker du dig? (f.eks. Nyt LEGO-sæt)"
-                  value={newWishTitle}
-                  onChange={(e) => setNewWishTitle(e.target.value)}
-                  required
-                  className="bg-stone-50 text-stone-900 border border-stone-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 placeholder:text-stone-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Evt. bemærkning..."
-                  value={newWishNote}
-                  onChange={(e) => setNewWishNote(e.target.value)}
-                  className="bg-stone-50 text-stone-900 border border-stone-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 placeholder:text-stone-400"
-                />
-                <button
-                  type="submit"
-                  disabled={submittingWish}
-                  className="bg-stone-900 hover:bg-stone-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition active:scale-95 self-start cursor-pointer shadow-sm"
-                >
-                  {submittingWish ? 'Sender...' : 'Send Ønske ✨'}
-                </button>
-              </form>
-
-              {userWishes.length > 0 && (
-                <div className="pt-2 border-t border-stone-100">
-                  <h4 className="text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">
-                    Dine Indsendte Ønsker
-                  </h4>
-                  <div className="space-y-2">
-                    {userWishes.map((w) => (
-                      <div
-                        key={w.id}
-                        className="bg-stone-50 p-3 rounded-xl border border-stone-200/60 flex justify-between items-center"
-                      >
+                {wishes.filter(w => w.status === 'pending').length > 0 && (
+                  <div className="mt-4 space-y-2 border-t border-stone-200 pt-3">
+                    <p className="text-xs font-bold text-stone-700">Indkomne Ønsker:</p>
+                    {wishes.filter(w => w.status === 'pending').map((wish) => (
+                      <div key={wish.id} className="bg-white p-3 rounded-xl border border-stone-200 flex justify-between items-center gap-2">
                         <div>
-                          <p className="font-bold text-stone-800 text-xs">{w.title}</p>
-                          {w.note && <p className="text-[11px] text-stone-500">{w.note}</p>}
+                          <p className="font-bold text-stone-900 text-xs">{wish.title}</p>
+                          {wish.note && <p className="text-[10px] text-stone-500">{wish.note}</p>}
                         </div>
-                        <span className="text-[10px] bg-stone-200/80 text-stone-600 px-2.5 py-1 rounded-full font-semibold">
-                          Afventer godkendelse... ⏳
-                        </span>
+                        <div className="flex gap-1">
+                          <button onClick={() => approveWish(wish)} className="bg-stone-900 text-white text-[10px] font-bold px-2.5 py-1.5 rounded-md">Prissæt</button>
+                          <button onClick={() => rejectWish(wish)} className="bg-stone-200 text-stone-700 text-[10px] font-bold px-2.5 py-1.5 rounded-md">Afvis</button>
+                        </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
-            </div>
-          </section>
+                )}
+              </section>
+            )}
+
+            {/* SHOPPEN */}
+            <section className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="text-base font-bold text-stone-900">🛒 BørneShoppen</h2>
+                <span className="text-xs text-stone-600 bg-white border border-stone-200 px-3 py-1 rounded-full shadow-sm font-bold">Din Pung: {activeUserData?.spendable_xp || 0} XP</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {rewards.map((reward) => {
+                  const canAfford = (activeUserData?.spendable_xp || 0) >= reward.cost_xp;
+                  return (
+                    <div key={reward.id} className={`bg-white border p-3.5 rounded-xl flex justify-between items-center gap-3 transition ${canAfford ? 'border-stone-200 shadow-sm' : 'border-stone-100 opacity-60'}`}>
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">{reward.icon}</span>
+                        <div>
+                          <h4 className="font-bold text-stone-900 text-sm">{reward.title}</h4>
+                          <p className="text-[10px] text-stone-500">{reward.description}</p>
+                        </div>
+                      </div>
+                      <button onClick={() => buyReward(reward)} disabled={!canAfford} className={`text-xs font-bold px-3 py-1.5 rounded-lg shrink-0 ${canAfford ? 'bg-emerald-600 text-white shadow-sm' : 'bg-stone-100 text-stone-400'}`}>
+                        {reward.cost_xp} XP
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* SEND ØNSKE FORMULAR */}
+            <section className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm">
+              <h3 className="text-sm font-bold text-stone-900 mb-1">Mangler der noget?</h3>
+              <p className="text-[11px] text-stone-500 mb-4">Send et ønske til mor og far, så de kan sætte det i shoppen.</p>
+              <form onSubmit={submitWish} className="flex flex-col gap-2.5">
+                <input type="text" placeholder="Hvad ønsker du dig?" value={newWishTitle} onChange={(e) => setNewWishTitle(e.target.value)} required className="bg-stone-50 border border-stone-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none" />
+                <button type="submit" disabled={submittingWish} className="bg-stone-900 text-white font-bold py-2 px-4 rounded-lg text-xs self-start">Send Ønske ✨</button>
+              </form>
+            </section>
+          </div>
         )}
       </div>
     </main>
