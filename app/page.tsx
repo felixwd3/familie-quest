@@ -35,7 +35,6 @@ export default function Home() {
 
       if (usersData) {
         setUsers(usersData);
-        // Bevar valgt bruger hvis den findes, ellers vælg den første
         if (!selectedUser && usersData.length > 0) setSelectedUser(usersData[0].id);
       }
       if (tasksData) setTasks(tasksData);
@@ -76,16 +75,13 @@ export default function Home() {
     const xpEarned = Math.round(task.duration_minutes * task.difficulty);
 
     try {
-      // 1. Gem log
       await supabase.from('event_logs').insert([{ user_id: selectedUser, task_id: task.id, xp_earned: xpEarned }]);
 
-      // 2. Opdater bruger
       const newTotalXp = (currentUser.total_xp || 0) + xpEarned;
       const newSpendableXp = (currentUser.spendable_xp || 0) + xpEarned;
       await supabase.from('users').update({ total_xp: newTotalXp, spendable_xp: newSpendableXp }).eq('id', selectedUser);
       setUsers(users.map((u) => u.id === selectedUser ? { ...u, total_xp: newTotalXp, spendable_xp: newSpendableXp } : u));
 
-      // 3. Opdater fælles familiemål
       if (activeGoal) {
         const newGoalXp = activeGoal.current_xp + xpEarned;
         await supabase.from('family_goals').update({ current_xp: newGoalXp }).eq('id', activeGoal.id);
@@ -142,7 +138,6 @@ export default function Home() {
     }
   };
 
-  // ADMIN: Godkend ønske
   const approveWish = async (wish: Wish) => {
     const costInput = prompt(`Angiv pris i XP for "${wish.title}":`, '100');
     if (!costInput) return;
@@ -166,7 +161,6 @@ export default function Home() {
     setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'rejected' } : w)));
   };
 
-  // ADMIN: Opret Nyt Familiemål
   const createNewFamilyGoal = async () => {
     const title = prompt('Hvad skal være familiens nye fælles mål? (f.eks. Tur i Tivoli)');
     if (!title) return;
@@ -175,9 +169,7 @@ export default function Home() {
     const targetXp = parseInt(targetInput, 10);
 
     try {
-      // Deaktiver gamle mål
       if (activeGoal) await supabase.from('family_goals').update({ is_active: false }).eq('id', activeGoal.id);
-      // Opret nyt
       const { data, error } = await supabase.from('family_goals').insert([{ title, target_xp: targetXp, is_active: true }]).select();
       if (error) throw error;
       if (data) setActiveGoal(data[0]);
@@ -187,9 +179,9 @@ export default function Home() {
     }
   };
 
-  // ADMIN: Roter faste tjanser
+  // SMART ROTERING: Sikrer 50/50 fordeling og bytter dem rundt
   const rotateChores = async () => {
-    if (!confirm('Vil du rotere de faste opgaver, så voksne bytter ansvarsområder?')) return;
+    if (!confirm('Vil du fordele og rotere de faste opgaver ligeligt mellem de voksne?')) return;
     
     const adults = users.filter(u => u.role === 'adult');
     if (adults.length < 2) {
@@ -201,14 +193,28 @@ export default function Home() {
     const adult2 = adults[1].id;
     const fixedTasks = tasks.filter(t => t.is_fixed);
 
+    // Tjekker om opgaverne er meget skævt fordelt (f.eks. ved første kørsel)
+    const count1 = fixedTasks.filter(t => t.assigned_to === adult1).length;
+    const count2 = fixedTasks.filter(t => t.assigned_to === adult2).length;
+    const isUnbalanced = Math.abs(count1 - count2) > 1;
+
     try {
-      for (const task of fixedTasks) {
-        // Hvis den ikke er tildelt, giv den til adult1, ellers byt
-        const newAssignee = task.assigned_to === adult1 ? adult2 : adult1;
+      for (let i = 0; i < fixedTasks.length; i++) {
+        const task = fixedTasks[i];
+        let newAssignee;
+
+        if (isUnbalanced || !task.assigned_to) {
+          // Hvis der er ubalance (f.eks. første gang), tvinger vi en 50/50 fordeling
+          newAssignee = i % 2 === 0 ? adult1 : adult2;
+        } else {
+          // Hvis de er pænt fordelt, bytter de voksne simpelthen tjanser
+          newAssignee = task.assigned_to === adult1 ? adult2 : adult1;
+        }
+
         await supabase.from('tasks').update({ assigned_to: newAssignee }).eq('id', task.id);
       }
-      alert('🔄 Opgaverne er nu byttet!');
-      fetchData(); // Genindlæs for at se ændringerne
+      alert('🔄 Opgaverne er nu fordelt ligeligt og byttet!');
+      fetchData(); // Genindlæs UI
     } catch (err) {
       console.error(err);
     }
@@ -225,17 +231,14 @@ export default function Home() {
   const activeUserData = users.find((u) => u.id === selectedUser);
   const isAdult = activeUserData?.role === 'adult';
   
-  // Opdel opgaver
   const myFixedTasks = tasks.filter(t => t.is_fixed && t.assigned_to === selectedUser);
   const unassignedFixedTasks = tasks.filter(t => t.is_fixed && !t.assigned_to);
   const freeTasks = tasks.filter(t => !t.is_fixed);
 
-  // Familiemål progress
   const goalProgress = activeGoal ? Math.min(100, Math.round((activeGoal.current_xp / activeGoal.target_xp) * 100)) : 0;
 
   return (
     <main className="min-h-screen bg-[#FAF9F6] text-stone-800 pb-16 antialiased">
-      {/* Top Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-stone-200/80 sticky top-0 z-50">
         <div className="max-w-3xl mx-auto px-4 py-3 flex justify-between items-center gap-4">
           <div className="flex items-center gap-3">
@@ -259,7 +262,6 @@ export default function Home() {
       </header>
 
       <div className="max-w-3xl mx-auto px-4 pt-6 space-y-8">
-        
         {/* FÆLLES FAMILIEMÅL */}
         {activeGoal && (
           <section className="bg-white rounded-2xl p-6 border border-stone-200/90 shadow-sm relative overflow-hidden">
@@ -339,10 +341,9 @@ export default function Home() {
                 <p className="text-xs text-stone-500 italic">Du har ingen faste, tunge opgaver tildelt i denne uge. Nyd det!</p>
               )}
               
-              {/* Viser ikke-tildelte faste tjanser hvis forældre har glemt at rotere/tildele dem */}
               {isAdult && unassignedFixedTasks.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl mt-2">
-                  <p className="text-xs text-amber-800 font-semibold mb-2">⚠️ Der er faste opgaver, som mangler en ejer. Tryk "Roter Faste Opgaver" i shoppen.</p>
+                  <p className="text-xs text-amber-800 font-semibold mb-2">⚠️ Der er faste opgaver, som mangler en ejer. Tryk "Roter faste tjanser" i shoppen.</p>
                 </div>
               )}
             </section>
@@ -377,7 +378,7 @@ export default function Home() {
         {activeTab === 'shop' && (
           <div className="space-y-8">
             
-            {/* FORÆLDREPANEL (Kun synligt for adults) */}
+            {/* FORÆLDREPANEL */}
             {isAdult && (
               <section className="bg-stone-100 p-5 rounded-2xl border border-stone-200 space-y-4">
                 <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2"><span>⚙️</span> Forældre Kontrolpanel</h3>
@@ -393,7 +394,7 @@ export default function Home() {
 
                 {wishes.filter(w => w.status === 'pending').length > 0 && (
                   <div className="mt-4 space-y-2 border-t border-stone-200 pt-3">
-                    <p className="text-xs font-bold text-stone-700">Indkomne Ønsker:</p>
+                    <p className="text-xs font-bold text-stone-700">Indkomne Ønsker fra Shoppen:</p>
                     {wishes.filter(w => w.status === 'pending').map((wish) => (
                       <div key={wish.id} className="bg-white p-3 rounded-xl border border-stone-200 flex justify-between items-center gap-2">
                         <div>
