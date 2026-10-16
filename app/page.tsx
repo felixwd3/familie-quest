@@ -25,44 +25,29 @@ export default function Home() {
   // Vores nye lækre Toast-notifikationssystem
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'warning' } | null>(null);
 
+  // --- PIN KODE SYSTEM TIL VOKSNE ---
+  const COMMON_PIN = '1234'; // Standard PIN-kode
+  const [showPinModal, setShowPinModal] = useState<boolean>(false);
+  const [tempSelectedUser, setTempSelectedUser] = useState<string>('');
+  const [pinInput, setPinInput] = useState<string>('');
+  const [pinError, setPinError] = useState<boolean>(false);
+
   const showToast = (message: string, type: 'success' | 'info' | 'warning' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Konfetti-funktion til fejring
   const triggerConfetti = () => {
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#10b981', '#f59e0b', '#3b82f6']
-    });
+    confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#10b981', '#f59e0b', '#3b82f6'] });
   };
 
   const triggerGrandConfetti = () => {
     const duration = 3000;
     const end = Date.now() + duration;
-
     (function frame() {
-      confetti({
-        particleCount: 5,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0 },
-        colors: ['#10b981', '#f59e0b', '#3b82f6']
-      });
-      confetti({
-        particleCount: 5,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1 },
-        colors: ['#10b981', '#f59e0b', '#3b82f6']
-      });
-
-      if (Date.now() < end) {
-        requestAnimationFrame(frame);
-      }
+      confetti({ particleCount: 5, angle: 60, spread: 55, origin: { x: 0 }, colors: ['#10b981', '#f59e0b', '#3b82f6'] });
+      confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1 }, colors: ['#10b981', '#f59e0b', '#3b82f6'] });
+      if (Date.now() < end) requestAnimationFrame(frame);
     }());
   };
 
@@ -81,7 +66,11 @@ export default function Home() {
 
       if (usersData) {
         setUsers(usersData);
-        if (!selectedUser && usersData.length > 0) setSelectedUser(usersData[0].id);
+        if (!selectedUser && usersData.length > 0) {
+          // Default vælg barn, hvis man åbner appen første gang (for at undgå pin-kode ved load)
+          const childUser = usersData.find(u => u.role === 'child');
+          setSelectedUser(childUser ? childUser.id : usersData[0].id);
+        }
       }
       if (tasksData) setTasks(tasksData);
       if (rewardsData) setRewards(rewardsData);
@@ -98,6 +87,39 @@ export default function Home() {
     if (isClient) fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClient]);
+
+  // Håndtering af profil-skift med PIN-lås
+  const handleUserSelect = (userId: string) => {
+    if (userId === selectedUser) return;
+    const targetUser = users.find(u => u.id === userId);
+    
+    if (targetUser?.role === 'adult') {
+      setTempSelectedUser(userId);
+      setPinInput('');
+      setPinError(false);
+      setShowPinModal(true);
+    } else {
+      setSelectedUser(userId);
+      showToast(`Skiftede til ${targetUser?.name}`, 'info');
+    }
+  };
+
+  const handlePinInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/\D/g, ''); // Kun tal tilladt
+    setPinInput(val);
+    setPinError(false);
+
+    if (val.length === 4) {
+      if (val === COMMON_PIN) {
+        setSelectedUser(tempSelectedUser);
+        setShowPinModal(false);
+        showToast('Låst op! Voksen-adgang bevilget.', 'success');
+      } else {
+        setPinError(true);
+        setPinInput('');
+      }
+    }
+  };
 
   const calculateLevel = (totalXp: number = 0) => {
     const level = Math.floor(totalXp / 100) + 1;
@@ -293,6 +315,40 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#FAF9F6] text-stone-800 pb-20 antialiased relative">
       
+      {/* PIN KODE MODAL */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-stone-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-xs shadow-2xl border border-stone-200 animate-in zoom-in-95 duration-200">
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center text-2xl mx-auto mb-3">🔒</div>
+              <h3 className="text-lg font-black text-stone-900">Forældre-lås</h3>
+              <p className="text-xs font-medium text-stone-500 mt-1">Indtast PIN (Standard: 1234)</p>
+            </div>
+            
+            <div className="flex justify-center gap-2 mb-6">
+              <input 
+                type="password" 
+                inputMode="numeric"
+                maxLength={4}
+                autoFocus
+                value={pinInput}
+                onChange={handlePinInput}
+                className={`w-32 text-center tracking-[0.5em] font-black text-2xl border-b-2 bg-transparent focus:outline-none py-2 transition-colors ${pinError ? 'border-rose-500 text-rose-500' : 'border-stone-300 text-stone-900 focus:border-emerald-500'}`}
+              />
+            </div>
+            
+            {pinError && <p className="text-xs text-rose-500 text-center font-bold mb-4">Forkert kode. Prøv igen.</p>}
+            
+            <button 
+              onClick={() => setShowPinModal(false)}
+              className="w-full py-3 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors active:scale-95"
+            >
+              Annuller
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Lækre Custom Toasts */}
       {toast && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl backdrop-blur-md border border-white/20 transition-all duration-300 animate-in slide-in-from-bottom-8 fade-in flex items-center gap-3 font-semibold text-sm ${
@@ -319,7 +375,7 @@ export default function Home() {
             <span className="text-xs text-stone-500 font-medium hidden sm:inline">Aktiv:</span>
             <select
               value={selectedUser}
-              onChange={(e) => setSelectedUser(e.target.value)}
+              onChange={(e) => handleUserSelect(e.target.value)}
               className="bg-white text-stone-800 font-bold border border-stone-200 rounded-full px-4 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer shadow-sm hover:shadow-md transition-shadow"
             >
               {users.map((u) => (
@@ -332,7 +388,7 @@ export default function Home() {
 
       <div className="max-w-3xl mx-auto px-4 pt-8 space-y-10">
         
-        {/* FÆLLES FAMILIEMÅL (Opdateret med lækkert glow) */}
+        {/* FÆLLES FAMILIEMÅL */}
         {activeGoal && (
           <section className="bg-white rounded-3xl p-7 border border-stone-200/90 shadow-xl shadow-stone-200/50 relative overflow-hidden group hover:shadow-2xl hover:border-emerald-200 transition-all duration-500">
             <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-emerald-100 to-transparent rounded-full blur-3xl -mr-16 -mt-16 opacity-60 group-hover:opacity-80 transition-opacity duration-500"></div>
@@ -366,6 +422,55 @@ export default function Home() {
             </div>
           </section>
         )}
+
+        {/* Profil-kort med LÅS på voksne */}
+        <section>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {users.map((u) => {
+              const { level, progress } = calculateLevel(u.total_xp);
+              const isSelected = u.id === selectedUser;
+              const isAdultCard = u.role === 'adult';
+
+              return (
+                <div
+                  key={u.id}
+                  onClick={() => handleUserSelect(u.id)}
+                  className={`relative rounded-3xl p-5 transition-all duration-300 cursor-pointer border hover:-translate-y-1 ${
+                    isSelected
+                      ? 'bg-white border-stone-800 shadow-xl ring-1 ring-stone-800/10'
+                      : 'bg-white/60 border-stone-200/80 hover:bg-white hover:border-stone-300 hover:shadow-md'
+                  }`}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 className="font-black text-stone-900 text-lg flex items-center gap-2">
+                        {u.name} 
+                        {isAdultCard && <span className="text-xs opacity-50">🔒</span>}
+                      </h3>
+                      <p className="text-xs text-stone-500 font-medium mt-0.5">Niveau {level}</p>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full text-xs border border-emerald-200/60 shadow-sm">
+                        ✨ {u.spendable_xp || 0}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 mt-4">
+                    <div className="flex justify-between text-[11px] font-medium text-stone-500">
+                      <span>Niveaufremgang</span>
+                      <span>{progress}/100</span>
+                    </div>
+                    <div className="w-full bg-stone-100 rounded-full h-1.5 overflow-hidden border border-stone-200/50">
+                      <div className="bg-stone-800 h-1.5 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
 
         {/* Fanebladsnavigation */}
         <div className="flex bg-stone-200/60 p-1.5 rounded-2xl max-w-sm mx-auto border border-stone-200/80 shadow-inner">
