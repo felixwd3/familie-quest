@@ -1,15 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
-import { User, Task, Reward, Wish, FamilyGoal } from '@/lib/types';
+import { User, Task, Reward, Wish, FamilyGoal, EventLog } from '@/lib/types';
 import confetti from 'canvas-confetti';
+import { playLevelUpSound, triggerHaptic } from '@/lib/audio';
 
 export default function Home() {
   const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [wishes, setWishes] = useState<Wish[]>([]);
+  const [eventLogs, setEventLogs] = useState<EventLog[]>([]);
   const [activeGoal, setActiveGoal] = useState<FamilyGoal | null>(null);
   
   const [selectedUser, setSelectedUser] = useState<string>('');
@@ -24,12 +26,13 @@ export default function Home() {
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'warning' } | null>(null);
 
-  // PIN KODE
+  // PIN KODE & STREAK
   const COMMON_PIN = '1234'; 
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
   const [tempSelectedUser, setTempSelectedUser] = useState<string>('');
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<boolean>(false);
+  const [streakDays, setStreakDays] = useState<number>(0);
 
   const showToast = (message: string, type: 'success' | 'info' | 'warning' = 'success') => {
     setToast({ message, type });
@@ -62,18 +65,22 @@ export default function Home() {
       const { data: rewardsData } = await supabase.from('rewards').select('*');
       const { data: wishesData } = await supabase.from('wishes').select('*');
       const { data: goalData } = await supabase.from('family_goals').select('*').eq('is_active', true).single();
+      const { data: logsData } = await supabase.from('event_logs').select('*');
+      const { data: streakData } = await supabase.from('daily_streaks').select('*').eq('power_cleanup_done', true);
 
       if (usersData) {
         setUsers(usersData);
         if (!selectedUser && usersData.length > 0) {
-          const childUser = usersData.find(u => u.role === 'child');
-          setSelectedUser(childUser ? childUser.id : usersData[0].id);
+          const defaultUser = usersData.find(u => u.name === 'Hector') || usersData[0];
+          setSelectedUser(defaultUser.id);
         }
       }
       if (tasksData) setTasks(tasksData);
       if (rewardsData) setRewards(rewardsData);
       if (wishesData) setWishes(wishesData);
       if (goalData) setActiveGoal(goalData);
+      if (logsData) setEventLogs(logsData);
+      if (streakData) setStreakDays(streakData.length);
     } catch (err) {
       console.error('Fejl ved indlæsning af data:', err);
     } finally {
@@ -85,6 +92,15 @@ export default function Home() {
     if (isClient) fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClient]);
+
+  // Udvælg Dagens Lucky Quest baseret på dato
+  const luckyQuestId = useMemo(() => {
+    const freeTasks = tasks.filter(t => !t.is_fixed);
+    if (freeTasks.length === 0) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const hash = today.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return freeTasks[hash % freeTasks.length].id;
+  }, [tasks]);
 
   const handleUserSelect = (userId: string) => {
     if (userId === selectedUser) return;
@@ -111,9 +127,11 @@ export default function Home() {
         setSelectedUser(tempSelectedUser);
         setShowPinModal(false);
         showToast('Låst op! Voksen-adgang bevilget.', 'success');
+        triggerHaptic();
       } else {
         setPinError(true);
         setPinInput('');
+        triggerHaptic([100, 50, 100]); // Fejl vibration
       }
     }
   };
@@ -130,9 +148,8 @@ export default function Home() {
       case 'Rengøring': return '🧹';
       case 'Badeværelse': return '✨';
       case 'Tøjvask': return '🧺';
-      case 'Sengelinned': return '🌿';
-      case 'Affald': return '🌱';
-      case 'Børne-quest': return '🎈';
+      case 'Planlægning': return '📅';
+      case 'Børn': return '🧸';
       default: return '📋';
     }
   };
@@ -143,7 +160,8 @@ export default function Home() {
     const currentUser = users.find((u) => u.id === selectedUser);
     if (!currentUser) return;
 
-    const xpEarned = Math.round(task.duration_minutes * task.difficulty);
+    let xpEarned = Math.round(task.duration_minutes * task.difficulty);
+    if (task.id === luckyQuestId) xpEarned *= 2; // Lucky Quest Bonus!
 
     try {
       await supabase.from('event_logs').insert([{ user_id: selectedUser, task_id: task.id, xp_earned: xpEarned }]);
@@ -152,6 +170,10 @@ export default function Home() {
       const newSpendableXp = (currentUser.spendable_xp || 0) + xpEarned;
       await supabase.from('users').update({ total_xp: newTotalXp, spendable_xp: newSpendableXp }).eq('id', selectedUser);
       setUsers(users.map((u) => u.id === selectedUser ? { ...u, total_xp: newTotalXp, spendable_xp: newSpendableXp } : u));
+      
+      // Feedback
+      playLevelUpSound();
+      triggerHaptic();
 
       if (activeGoal) {
         const newGoalXp = activeGoal.current_xp + xpEarned;
@@ -169,6 +191,7 @@ export default function Home() {
         triggerConfetti();
         showToast(`✨ +${xpEarned} XP til ${currentUser.name}!`, 'success');
       }
+      fetchData(); // Opdater logs til Fairness
     } catch (err) {
       console.error('Fejl ved gemning af opgave:', err);
       showToast('Der opstod en fejl. Prøv igen.', 'warning');
@@ -183,23 +206,24 @@ export default function Home() {
     let totalGoalBoost = 0;
 
     try {
-      // Giv 30 XP til alle brugere
       const updatedUsers = users.map(u => {
         totalGoalBoost += xpPerPerson;
-        return {
-          ...u,
-          total_xp: (u.total_xp || 0) + xpPerPerson,
-          spendable_xp: (u.spendable_xp || 0) + xpPerPerson
-        };
+        return { ...u, total_xp: (u.total_xp || 0) + xpPerPerson, spendable_xp: (u.spendable_xp || 0) + xpPerPerson };
       });
 
-      // Opdater i databasen for hver bruger
       for (const u of updatedUsers) {
         await supabase.from('users').update({ total_xp: u.total_xp, spendable_xp: u.spendable_xp }).eq('id', u.id);
       }
       setUsers(updatedUsers);
 
-      // Giv point til Fællesmålet
+      // Gem Streak
+      const today = new Date().toISOString().slice(0, 10);
+      await supabase.from('daily_streaks').upsert({ date: today, power_cleanup_done: true }, { onConflict: 'date' });
+      setStreakDays(prev => prev + 1);
+
+      playLevelUpSound();
+      triggerHaptic([50, 100, 50, 100, 50]);
+
       if (activeGoal) {
         const newGoalXp = activeGoal.current_xp + totalGoalBoost;
         await supabase.from('family_goals').update({ current_xp: newGoalXp }).eq('id', activeGoal.id);
@@ -207,14 +231,13 @@ export default function Home() {
         
         if (newGoalXp >= activeGoal.target_xp && activeGoal.current_xp < activeGoal.target_xp) {
           triggerGrandConfetti();
-          showToast(`🎉 KÆMPE TILLYKKE! Familien har nået målet!`, 'success');
         } else {
           triggerGrandConfetti();
-          showToast(`🎵 Episk holdindsats! +${xpPerPerson} XP til alle og +${totalGoalBoost} XP til målet!`, 'success');
+          showToast(`🎵 Episk holdindsats! +${totalGoalBoost} XP til målet! 🔥 Streak: ${streakDays + 1}`, 'success');
         }
       } else {
         triggerGrandConfetti();
-        showToast(`🎵 Episk holdindsats! +${xpPerPerson} XP til alle!`, 'success');
+        showToast(`🎵 Episk holdindsats! 🔥 Streak: ${streakDays + 1}`, 'success');
       }
     } catch (err) {
       console.error('Fejl ved fælles oprydning:', err);
@@ -226,7 +249,7 @@ export default function Home() {
     const currentUser = users.find((u) => u.id === selectedUser);
     if (!currentUser) return;
     if ((currentUser.spendable_xp || 0) < reward.cost_xp) {
-      showToast(`Du mangler ${reward.cost_xp - (currentUser.spendable_xp || 0)} XP.`, 'warning');
+      showToast(`Du mangler XP.`, 'warning');
       return;
     }
     if (!confirm(`Vil du indløse "${reward.title}" for ${reward.cost_xp} XP?`)) return;
@@ -238,6 +261,8 @@ export default function Home() {
       setUsers(users.map((u) => u.id === selectedUser ? { ...u, spendable_xp: newSpendableXp } : u));
       
       triggerConfetti();
+      playLevelUpSound();
+      triggerHaptic();
       showToast(`🎁 Tillykke! Du har indløst ${reward.title}.`, 'success');
     } catch (err) {
       console.error('Fejl ved køb:', err);
@@ -254,6 +279,7 @@ export default function Home() {
       if (data) setWishes([...wishes, data[0]]);
       setNewWishTitle('');
       setNewWishNote('');
+      triggerHaptic();
       showToast('🌟 Dit ønske er sendt til godkendelse!', 'success');
     } catch (err) {
       console.error('Fejl:', err);
@@ -274,6 +300,7 @@ export default function Home() {
       await supabase.from('wishes').update({ status: 'approved' }).eq('id', wish.id);
       if (newReward) setRewards([...rewards, newReward[0]]);
       setWishes(wishes.map((w) => (w.id === wish.id ? { ...w, status: 'approved' } : w)));
+      triggerHaptic();
       showToast(`✅ Ønsket er nu godkendt til ${costXp} XP!`, 'success');
     } catch (err) {
       console.error('Fejl:', err);
@@ -300,6 +327,7 @@ export default function Home() {
       if (error) throw error;
       if (data) setActiveGoal(data[0]);
       triggerConfetti();
+      playLevelUpSound();
       showToast(`🎯 Nyt familiemål oprettet!`, 'success');
     } catch (err) {
       console.error(err);
@@ -331,12 +359,41 @@ export default function Home() {
           : (task.assigned_to === adult1 ? adult2 : adult1);
         await supabase.from('tasks').update({ assigned_to: newAssignee }).eq('id', task.id);
       }
+      triggerHaptic();
       showToast('🔄 Opgaverne er nu fordelt og byttet!', 'success');
       fetchData();
     } catch (err) {
       console.error(err);
     }
   };
+
+  // Udkregn Fairness (kun for voksne, XP optjent seneste 7 dage)
+  const calculateFairness = () => {
+    const adults = users.filter(u => u.role === 'adult');
+    if (adults.length < 2) return { adult1: null, adult2: null, p1: 50, p2: 50 };
+    
+    const adult1 = adults[0];
+    const adult2 = adults[1];
+    
+    const recentLogs = eventLogs.filter(log => {
+      const logDate = new Date(log.created_at);
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      return logDate >= sevenDaysAgo;
+    });
+
+    const xp1 = recentLogs.filter(l => l.user_id === adult1.id).reduce((sum, l) => sum + l.xp_earned, 0);
+    const xp2 = recentLogs.filter(l => l.user_id === adult2.id).reduce((sum, l) => sum + l.xp_earned, 0);
+    const total = xp1 + xp2 || 1; // undgå / 0
+    
+    return {
+      adult1, adult2,
+      xp1, xp2,
+      p1: Math.round((xp1 / total) * 100),
+      p2: Math.round((xp2 / total) * 100)
+    };
+  };
+  const fairness = calculateFairness();
 
   if (!isClient || loading) {
     return (
@@ -352,8 +409,8 @@ export default function Home() {
   const myFixedTasks = tasks.filter(t => t.is_fixed && t.assigned_to === selectedUser);
   const unassignedFixedTasks = tasks.filter(t => t.is_fixed && !t.assigned_to);
   
-  // FILTRERING: Vis kun de frie tasks, der matcher brugerens rolle
-  const allowedFreeTasks = tasks.filter(t => !t.is_fixed && (t.target_role === activeUserData?.role || !t.target_role));
+  // Filtrer Frie Quests: Voksne ser adult+all, Børn ser child+all
+  const allowedFreeTasks = tasks.filter(t => !t.is_fixed && (t.target_role === activeUserData?.role || t.target_role === 'all' || !t.target_role));
 
   const goalProgress = activeGoal ? Math.min(100, Math.round((activeGoal.current_xp / activeGoal.target_xp) * 100)) : 0;
   const categories = ['Alle', ...Array.from(new Set(allowedFreeTasks.map((t) => t.category)))];
@@ -374,34 +431,26 @@ export default function Home() {
             
             <div className="flex justify-center gap-2 mb-6">
               <input 
-                type="password" 
-                inputMode="numeric"
-                maxLength={4}
-                autoFocus
-                value={pinInput}
-                onChange={handlePinInput}
+                type="password" inputMode="numeric" maxLength={4} autoFocus
+                value={pinInput} onChange={handlePinInput}
                 className={`w-32 text-center tracking-[0.5em] font-black text-2xl border-b-2 bg-transparent focus:outline-none py-2 transition-colors ${pinError ? 'border-rose-500 text-rose-500' : 'border-stone-300 text-stone-900 focus:border-emerald-500'}`}
               />
             </div>
             
             {pinError && <p className="text-xs text-rose-500 text-center font-bold mb-4">Forkert kode. Prøv igen.</p>}
             
-            <button 
-              onClick={() => setShowPinModal(false)}
-              className="w-full py-3 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors active:scale-95"
-            >
+            <button onClick={() => setShowPinModal(false)} className="w-full py-3 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors active:scale-95">
               Annuller
             </button>
           </div>
         </div>
       )}
 
-      {/* Lækre Custom Toasts */}
+      {/* TOASTS */}
       {toast && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl backdrop-blur-md border border-white/20 transition-all duration-300 animate-in slide-in-from-bottom-8 fade-in flex items-center gap-3 font-semibold text-sm ${
           toast.type === 'success' ? 'bg-emerald-600/90 text-white' : 
-          toast.type === 'warning' ? 'bg-amber-500/90 text-white' : 
-          'bg-stone-800/90 text-white'
+          toast.type === 'warning' ? 'bg-amber-500/90 text-white' : 'bg-stone-800/90 text-white'
         }`}>
           {toast.type === 'success' && '✨'}
           {toast.type === 'warning' && '⚠️'}
@@ -410,11 +459,11 @@ export default function Home() {
         </div>
       )}
 
-      {/* Top Header */}
+      {/* HEADER */}
       <header className="bg-white/80 backdrop-blur-xl border-b border-stone-200/80 sticky top-0 z-50 transition-all">
         <div className="max-w-3xl mx-auto px-4 py-3 flex justify-between items-center gap-4">
           <div className="flex items-center gap-3 hover:scale-105 transition-transform duration-300 cursor-pointer">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-stone-800 to-stone-600 text-white flex items-center justify-center text-sm font-bold shadow-md shadow-stone-800/20">FQ</div>
+            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-stone-800 to-stone-600 text-white flex items-center justify-center text-sm font-bold shadow-md">FQ</div>
             <h1 className="text-lg font-bold tracking-tight text-stone-900 hidden sm:block">FamilieQuest</h1>
           </div>
 
@@ -425,9 +474,7 @@ export default function Home() {
               onChange={(e) => handleUserSelect(e.target.value)}
               className="bg-white text-stone-800 font-bold border border-stone-200 rounded-full px-4 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer shadow-sm hover:shadow-md transition-shadow"
             >
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
+              {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </div>
         </div>
@@ -445,7 +492,7 @@ export default function Home() {
               <div className="flex justify-between items-end mb-4">
                 <div>
                   <h2 className="text-xs font-black uppercase tracking-widest text-emerald-600 mb-1.5 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Fælles Familiemål
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Familiens Mål
                   </h2>
                   <h3 className="text-2xl font-black text-stone-900 tracking-tight">{activeGoal.title}</h3>
                 </div>
@@ -456,10 +503,7 @@ export default function Home() {
               </div>
               
               <div className="w-full bg-stone-100 rounded-full h-4 overflow-hidden border border-stone-200/60 shadow-inner">
-                <div 
-                  className="bg-gradient-to-r from-emerald-400 to-emerald-500 h-full rounded-full transition-all duration-1000 ease-out relative shadow-[0_0_10px_rgba(16,185,129,0.4)]"
-                  style={{ width: `${goalProgress}%` }}
-                >
+                <div className="bg-gradient-to-r from-emerald-400 to-emerald-500 h-full rounded-full transition-all duration-1000 ease-out relative shadow-[0_0_10px_rgba(16,185,129,0.4)]" style={{ width: `${goalProgress}%` }}>
                   <div className="absolute inset-0 bg-white/30 w-full animate-[pulse_2s_ease-in-out_infinite]"></div>
                 </div>
               </div>
@@ -470,49 +514,57 @@ export default function Home() {
           </section>
         )}
 
-        {/* Profil-kort */}
+        {/* Profil-kort (Heltekort) */}
         <section>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {users.map((u) => {
               const { level, progress } = calculateLevel(u.total_xp);
               const isSelected = u.id === selectedUser;
               const isAdultCard = u.role === 'adult';
+              const isMascot = u.name === 'Hugo';
 
               return (
                 <div
                   key={u.id}
                   onClick={() => handleUserSelect(u.id)}
                   className={`relative rounded-3xl p-5 transition-all duration-300 cursor-pointer border hover:-translate-y-1 ${
-                    isSelected
-                      ? 'bg-white border-stone-800 shadow-xl ring-1 ring-stone-800/10'
-                      : 'bg-white/60 border-stone-200/80 hover:bg-white hover:border-stone-300 hover:shadow-md'
+                    isSelected ? 'bg-white border-stone-800 shadow-xl ring-1 ring-stone-800/10' : 'bg-white/60 border-stone-200/80 hover:bg-white hover:border-stone-300 hover:shadow-md'
                   }`}
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div>
                       <h3 className="font-black text-stone-900 text-lg flex items-center gap-2">
-                        {u.name} 
+                        {isMascot ? '👶' : ''} {u.name} 
                         {isAdultCard && <span className="text-xs opacity-50">🔒</span>}
                       </h3>
-                      <p className="text-xs text-stone-500 font-medium mt-0.5">Niveau {level}</p>
+                      <p className="text-xs text-stone-500 font-medium mt-0.5">{isMascot ? 'Familiens Mascot' : `Niveau ${level}`}</p>
                     </div>
 
-                    <div className="text-right">
-                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full text-xs border border-emerald-200/60 shadow-sm">
-                        ✨ {u.spendable_xp || 0}
-                      </span>
-                    </div>
+                    {!isMascot && (
+                      <div className="text-right">
+                        <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full text-xs border border-emerald-200/60 shadow-sm">
+                          ✨ {u.spendable_xp || 0}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="space-y-1.5 mt-4">
-                    <div className="flex justify-between text-[11px] font-medium text-stone-500">
-                      <span>Niveaufremgang</span>
-                      <span>{progress}/100</span>
+                  {!isMascot && (
+                    <div className="space-y-1.5 mt-4">
+                      <div className="flex justify-between text-[11px] font-medium text-stone-500">
+                        <span>Fremgang</span>
+                        <span>{progress}/100</span>
+                      </div>
+                      <div className="w-full bg-stone-100 rounded-full h-1.5 overflow-hidden border border-stone-200/50">
+                        <div className="bg-stone-800 h-1.5 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+                      </div>
                     </div>
-                    <div className="w-full bg-stone-100 rounded-full h-1.5 overflow-hidden border border-stone-200/50">
-                      <div className="bg-stone-800 h-1.5 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+                  )}
+                  {isMascot && (
+                    <div className="mt-4 pt-2 border-t border-stone-100">
+                      <p className="text-[10px] text-stone-400 italic">"Goo goo ga ga! Tak fordi I rydder op!"</p>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
@@ -521,18 +573,12 @@ export default function Home() {
 
         {/* Fanebladsnavigation */}
         <div className="flex bg-stone-200/60 p-1.5 rounded-2xl max-w-sm mx-auto border border-stone-200/80 shadow-inner">
-          <button
-            onClick={() => setActiveTab('quests')}
-            className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all duration-300 text-center ${activeTab === 'quests' ? 'bg-white text-stone-900 shadow-md scale-105' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/50'}`}
-          >
+          <button onClick={() => setActiveTab('quests')} className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all duration-300 text-center ${activeTab === 'quests' ? 'bg-white text-stone-900 shadow-md scale-105' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/50'}`}>
             Opgaver
           </button>
-          <button
-            onClick={() => setActiveTab('shop')}
-            className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all duration-300 text-center flex items-center justify-center gap-2 ${activeTab === 'shop' ? 'bg-white text-stone-900 shadow-md scale-105' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/50'}`}
-          >
+          <button onClick={() => setActiveTab('shop')} className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all duration-300 text-center flex items-center justify-center gap-2 ${activeTab === 'shop' ? 'bg-white text-stone-900 shadow-md scale-105' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/50'}`}>
             <span>BørneShop</span>
-            {activeUserData && <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-black shadow-sm">{activeUserData.spendable_xp || 0}</span>}
+            {activeUserData && activeUserData.name !== 'Hugo' && <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-black shadow-sm">{activeUserData.spendable_xp || 0}</span>}
           </button>
         </div>
 
@@ -544,11 +590,11 @@ export default function Home() {
             <section className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-3xl p-1 relative overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 group">
               <div className="bg-white/95 backdrop-blur-sm rounded-[22px] p-5 flex flex-col sm:flex-row justify-between items-center gap-4 relative z-10">
                 <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-3xl shadow-inner group-hover:scale-110 transition-transform duration-300">
-                    🎵
-                  </div>
+                  <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-3xl shadow-inner group-hover:scale-110 transition-transform duration-300">🎵</div>
                   <div>
-                    <h3 className="text-lg font-black bg-gradient-to-r from-indigo-600 to-pink-500 bg-clip-text text-transparent">10-Minutters Power Oprydning</h3>
+                    <h3 className="text-lg font-black bg-gradient-to-r from-indigo-600 to-pink-500 bg-clip-text text-transparent flex items-center gap-2">
+                      Power Oprydning {streakDays > 0 && <span className="text-orange-500 text-sm">🔥 {streakDays}</span>}
+                    </h3>
                     <p className="text-xs font-bold text-stone-500 mt-0.5">Sæt musik på og ryd op <span className="underline">sammen</span>. Belønner alle i familien!</p>
                   </div>
                 </div>
@@ -591,14 +637,7 @@ export default function Home() {
                 ) : (
                   <div className="bg-stone-50 border border-stone-200 border-dashed rounded-2xl p-6 text-center">
                     <span className="text-3xl block mb-2">🏖️</span>
-                    <p className="text-sm text-stone-500 font-medium">Ingen faste, tunge opgaver til dig i denne uge. Nyd det!</p>
-                  </div>
-                )}
-                
-                {unassignedFixedTasks.length > 0 && (
-                  <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mt-4 flex items-center gap-3 shadow-sm">
-                    <span className="text-2xl">⚠️</span>
-                    <p className="text-xs text-amber-800 font-bold leading-relaxed">Der er faste opgaver, som mangler en ejer. Tryk "Roter faste tjanser" i kontrolpanelet under shoppen.</p>
+                    <p className="text-sm text-stone-500 font-medium">Ingen faste opgaver til dig i denne uge. Nyd det!</p>
                   </div>
                 )}
               </section>
@@ -609,7 +648,7 @@ export default function Home() {
               <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
                 <span className="text-xl">🌟</span>
                 <h3 className="text-base font-black text-stone-900">
-                  {isAdult ? "Frie Fælles Quests" : "Dine Egne Quests"}
+                  {isAdult ? "Frie Fælles Quests (Mental Load m.m.)" : "Dine Egne Quests"}
                 </h3>
               </div>
 
@@ -632,18 +671,25 @@ export default function Home() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {filteredTasks.map((task) => {
-                  const xp = Math.round(task.duration_minutes * task.difficulty);
+                  const baseXP = Math.round(task.duration_minutes * task.difficulty);
+                  const isLucky = task.id === luckyQuestId;
+                  const finalXp = isLucky ? baseXP * 2 : baseXP;
+
                   return (
-                    <div key={task.id} className="bg-white border border-stone-200/80 p-4 rounded-2xl hover:border-stone-400 hover:shadow-lg hover:-translate-y-1 flex justify-between items-center transition-all duration-300">
+                    <div key={task.id} className={`bg-white border p-4 rounded-2xl flex justify-between items-center transition-all duration-300 ${isLucky ? 'border-amber-400 shadow-md shadow-amber-500/20' : 'border-stone-200/80 hover:border-stone-400 hover:shadow-lg hover:-translate-y-1'}`}>
                       <div className="flex items-center gap-3">
                         <span className="text-2xl opacity-90">{getCategoryIcon(task.category)}</span>
                         <div>
-                          <h4 className="font-bold text-stone-900 text-sm leading-tight">{task.title}</h4>
-                          <p className="text-[11px] font-medium text-stone-500 mt-1">{task.category}</p>
+                          <h4 className="font-bold text-stone-900 text-sm leading-tight flex items-center gap-2">
+                            {task.title} {isLucky && <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-300">2x XP!</span>}
+                          </h4>
+                          <p className="text-[11px] font-medium text-stone-500 mt-1">
+                            {task.category} {task.is_mental_load && <span className="text-indigo-500 font-bold ml-1">• Mental Load 🧠</span>}
+                          </p>
                         </div>
                       </div>
-                      <button onClick={() => completeTask(task)} className="bg-stone-800 hover:bg-stone-700 text-white text-xs font-black px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95 shrink-0">
-                        +{xp} XP
+                      <button onClick={() => completeTask(task)} className={`${isLucky ? 'bg-amber-500 hover:bg-amber-400 text-stone-900' : 'bg-stone-800 hover:bg-stone-700 text-white'} text-xs font-black px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95 shrink-0`}>
+                        +{finalXp} XP
                       </button>
                     </div>
                   );
@@ -659,10 +705,28 @@ export default function Home() {
             
             {/* FORÆLDREPANEL */}
             {isAdult && (
-              <section className="bg-stone-100 p-6 rounded-3xl border border-stone-200 shadow-inner space-y-5 relative overflow-hidden">
+              <section className="bg-stone-100 p-6 rounded-3xl border border-stone-200 shadow-inner space-y-6 relative overflow-hidden">
                 <div className="absolute top-0 right-0 text-9xl opacity-5">⚙️</div>
-                <h3 className="text-base font-black text-stone-900 flex items-center gap-2 relative z-10"><span>🛠️</span> Kontrolpanel</h3>
+                <h3 className="text-base font-black text-stone-900 flex items-center gap-2 relative z-10"><span>🛠️</span> Kontrolpanel & Fairness</h3>
                 
+                {/* Fairness Termometer */}
+                {fairness.adult1 && fairness.adult2 && (
+                  <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm relative z-10">
+                    <p className="text-xs font-bold text-stone-500 mb-2 uppercase tracking-wider">Ugens Fairness Balance (Seneste 7 dage)</p>
+                    <div className="flex justify-between text-xs font-black text-stone-800 mb-1">
+                      <span>{fairness.adult1.name} ({fairness.p1}%)</span>
+                      <span>{fairness.adult2.name} ({fairness.p2}%)</span>
+                    </div>
+                    <div className="w-full bg-stone-200 rounded-full h-2.5 flex overflow-hidden">
+                      <div className="bg-indigo-500 h-full transition-all duration-1000" style={{ width: `${fairness.p1}%` }}></div>
+                      <div className="bg-emerald-500 h-full transition-all duration-1000" style={{ width: `${fairness.p2}%` }}></div>
+                    </div>
+                    {Math.abs(fairness.p1 - fairness.p2) > 20 && (
+                      <p className="text-[10px] text-amber-600 font-bold mt-2 text-center">Tid til at partneren med færrest point tager en tørn! ⚖️</p>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-3 relative z-10">
                   <button onClick={createNewFamilyGoal} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md hover:shadow-emerald-500/30 active:scale-95 flex items-center gap-2">
                     <span>🎯</span> Nyt Familiemål
@@ -696,10 +760,12 @@ export default function Home() {
             <section className="space-y-5">
               <div className="flex justify-between items-center border-b border-stone-200 pb-2">
                 <h2 className="text-lg font-black text-stone-900 flex items-center gap-2"><span>🛍️</span> BørneShoppen</h2>
-                <div className="bg-white border border-stone-200 px-4 py-1.5 rounded-full shadow-sm flex items-center gap-2">
-                  <span className="text-xs text-stone-500 font-medium">Pung:</span>
-                  <strong className="text-sm font-black text-emerald-600">{activeUserData?.spendable_xp || 0} XP</strong>
-                </div>
+                {activeUserData?.role === 'child' && (
+                  <div className="bg-white border border-stone-200 px-4 py-1.5 rounded-full shadow-sm flex items-center gap-2">
+                    <span className="text-xs text-stone-500 font-medium">Pung:</span>
+                    <strong className="text-sm font-black text-emerald-600">{activeUserData?.spendable_xp || 0} XP</strong>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

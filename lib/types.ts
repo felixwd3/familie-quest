@@ -16,6 +16,7 @@ export interface Task {
   is_fixed?: boolean;
   assigned_to?: string | null;
   target_role?: 'adult' | 'child' | 'all';
+  is_mental_load?: boolean;
 }
 
 export interface EventLog {
@@ -51,6 +52,8 @@ export interface Wish {
   note?: string;
   status: 'pending' | 'approved' | 'rejected';
   created_at: string;
+  target_xp?: number;
+  image_url?: string;
 }
 
 export interface FamilyGoal {
